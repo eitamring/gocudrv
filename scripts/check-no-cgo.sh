@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Fail if any package needs cgo to build.
+CGO_ENABLED=0 go build ./...
+CGO_ENABLED=0 go test ./...
