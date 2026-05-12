@@ -30,3 +30,8 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Local working notes (not for commit)
+temp/
+.local/
+.notes/
