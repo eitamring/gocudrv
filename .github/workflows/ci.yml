@@ -4,16 +4,56 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
-  build:
+  test:
+    name: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
+          cache: true
+
+      - name: verify modules
+        run: go mod verify
+
       - name: vet
         run: go vet ./...
-      - name: build and test with cgo off
-        run: bash scripts/check-no-cgo.sh
+
+      - name: build with cgo off
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: test with race and coverage
+        run: go test -v -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: upload coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage.out
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.8.0
+          only-new-issues: true
