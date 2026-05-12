@@ -19,13 +19,6 @@ A thin Go wrapper around `libcuda.so.1` / `nvcuda.dll` so a Go program can:
 
 All without `cgo`, a C compiler, or the CUDA toolkit being installed at build time.
 
-## What it is not
-
-- not a CUDA kernel compiler
-- not a replacement for `nvcc`, the CUDA Runtime API, cuBLAS, cuDNN, or PyTorch
-- not a Go GPU framework
-- not a way to write CUDA kernels in Go
-
 ## Requirements
 
 - NVIDIA GPU with a working driver
