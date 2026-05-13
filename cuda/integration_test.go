@@ -3,6 +3,7 @@
 package cuda
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -26,6 +27,29 @@ func TestRealInitAndVersion(t *testing.T) {
 	t.Logf("driver version: %d", v)
 	if v <= 0 {
 		t.Errorf("version = %d, want > 0", v)
+	}
+}
+
+func TestRealPrimaryContext(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	for cycle := 0; cycle < 2; cycle++ {
+		ctx, err := dev.Primary()
+		if err != nil {
+			t.Fatalf("Primary cycle %d: %v", cycle, err)
+		}
+		if err := ctx.Synchronize(context.Background()); err != nil {
+			t.Errorf("Synchronize cycle %d: %v", cycle, err)
+		}
+		if err := ctx.Close(); err != nil {
+			t.Errorf("Close cycle %d: %v", cycle, err)
+		}
+		if err := ctx.Synchronize(context.Background()); !errors.Is(err, ErrContextClosed) {
+			t.Errorf("Synchronize after close: err = %v, want ErrContextClosed", err)
+		}
 	}
 }
 

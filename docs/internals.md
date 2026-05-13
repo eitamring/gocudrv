@@ -41,13 +41,18 @@ open attempts with their paths.
 
 ```go
 type Driver struct {
-    CuInit               func(flags uint32) CUresult
-    CuDriverGetVersion   func(version *int32) CUresult
-    CuDeviceGetCount     func(count *int32) CUresult
-    CuDeviceGet          func(device *CUdevice, ordinal int32) CUresult
-    CuDeviceGetName      func(name *byte, length int32, dev CUdevice) CUresult
-    CuDeviceTotalMem     func(bytes *uint64, dev CUdevice) CUresult
-    CuDeviceGetAttribute func(value *int32, attr int32, dev CUdevice) CUresult
+    CuInit                    func(flags uint32) CUresult
+    CuDriverGetVersion        func(version *int32) CUresult
+    CuDeviceGetCount          func(count *int32) CUresult
+    CuDeviceGet               func(device *CUdevice, ordinal int32) CUresult
+    CuDeviceGetName           func(name *byte, length int32, dev CUdevice) CUresult
+    CuDeviceTotalMem          func(bytes *uint64, dev CUdevice) CUresult
+    CuDeviceGetAttribute      func(value *int32, attr int32, dev CUdevice) CUresult
+    CuCtxGetCurrent           func(ctx *CUcontext) CUresult
+    CuCtxSetCurrent           func(ctx CUcontext) CUresult
+    CuCtxSynchronize          func() CUresult
+    CuDevicePrimaryCtxRetain  func(ctx *CUcontext, dev CUdevice) CUresult
+    CuDevicePrimaryCtxRelease func(dev CUdevice) CUresult
 }
 ```
 
@@ -60,6 +65,11 @@ type Driver struct {
 - `cuDeviceGetName`
 - `cuDeviceTotalMem_v2`
 - `cuDeviceGetAttribute`
+- `cuCtxGetCurrent`
+- `cuCtxSetCurrent`
+- `cuCtxSynchronize`
+- `cuDevicePrimaryCtxRetain`
+- `cuDevicePrimaryCtxRelease_v2`
 
 If any bind fails, `Load` closes the library before returning. On successful
 initialization, the package-global `cuda` driver keeps the handle alive.
@@ -70,3 +80,30 @@ initialization, the package-global `cuda` driver keeps the handle alive.
 known codes as CUDA macro names and unknown codes as `CUDA_ERROR_<number>`.
 `Error.Is` compares only the CUDA result code, so operation-specific errors
 still match bare sentinels with `errors.Is`.
+
+## executor
+
+CUDA's "current context" is per-OS-thread. Go goroutines move between OS
+threads, so a goroutine that called `cuCtxSetCurrent` cannot assume the
+context is still current the next time it issues a driver call.
+
+`internal/executor` solves this by owning one goroutine per `Context`,
+pinned to a single OS thread with `runtime.LockOSThread`. Every CUDA call
+that needs context affinity is submitted to that goroutine and runs there.
+
+```text
+caller goroutine -- exec.DoCtx(ctx, fn) --> task channel --> pinned thread
+                                                                 ^
+                                                                 | runs fn
+```
+
+The pinned goroutine never unlocks its OS thread. When `Close` stops the
+goroutine, the runtime retires the thread, so there is no thread leak.
+
+`DoCtx` accepts a `context.Context`. Cancellation stops the wait, not the
+GPU work; the function still runs to completion on the executor thread and
+its result is discarded. The result channel is buffered so the worker does
+not block when the caller has walked away.
+
+Panics inside `fn` are recovered and surfaced as `*executor.PanicError`;
+the executor stays alive so the caller can keep using it or close it.
