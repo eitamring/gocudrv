@@ -32,9 +32,7 @@ type Context struct {
 // On failure all partial state (retained context, started executor) is
 // rolled back before returning.
 func (d *Device) Primary() (*Context, error) {
-	mu.Lock()
-	drv := driver
-	mu.Unlock()
+	drv := currentDriver()
 	if drv == nil {
 		return nil, ErrNotInitialized
 	}
