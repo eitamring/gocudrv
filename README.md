@@ -1,8 +1,10 @@
 # gocudrv
 
-Pure-Go bindings for the NVIDIA CUDA Driver API. No cgo. The driver library is loaded dynamically at runtime.
+Pure-Go bindings for the NVIDIA CUDA Driver API. No cgo. The driver library is
+loaded dynamically at runtime.
 
-Status: very early. The repo layout is in place. APIs are not yet implemented.
+Status: very early. Initialization, driver version, and basic device
+enumeration are implemented.
 
 ## What it is
 
@@ -17,7 +19,15 @@ A thin Go wrapper around `libcuda.so.1` / `nvcuda.dll` so a Go program can:
 - launch kernels
 - record events
 
-All without `cgo`, a C compiler, or the CUDA toolkit being installed at build time.
+All without `cgo`, a C compiler, or the CUDA toolkit being installed at build
+time.
+
+## How it works
+
+At runtime, `gocudrv` opens the CUDA driver library (`libcuda.so.1` on Linux /
+WSL2, `nvcuda.dll` on Windows), binds the driver API symbols with pure Go, and
+wraps the raw CUDA result codes as Go errors. The public `cuda` package keeps
+raw handles behind Go types such as `Device`.
 
 ## Requirements
 
@@ -47,6 +57,13 @@ CGO_ENABLED=0 go build ./...
 CGO_ENABLED=0 go test ./...
 ```
 
+## Docs
+
+- [Getting started](docs/getting-started.md)
+- [Public API](docs/api/cuda.md)
+- [Internals](docs/internals.md)
+- [Docs index](docs/README.md)
+
 ## Layout
 
 ```
@@ -54,8 +71,7 @@ cudasys/       raw dynamic symbols, close to C ABI
 cudaresult/    thin wrappers returning Go errors
 cuda/          public Go API
 internal/      dynamic loader, executor, arg packing, platform paths
-examples/      runnable demos (added later)
-testdata/      precompiled PTX used by tests
+examples/      runnable demos
 scripts/       build and check helpers
 ```
 
