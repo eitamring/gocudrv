@@ -23,8 +23,13 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		name   string
 		failOn string
 	}{
-		{"first symbol fails", "cuInit"},
-		{"second symbol fails", "cuDriverGetVersion"},
+		{"cuInit fails", "cuInit"},
+		{"cuDriverGetVersion fails", "cuDriverGetVersion"},
+		{"cuDeviceGetCount fails", "cuDeviceGetCount"},
+		{"cuDeviceGet fails", "cuDeviceGet"},
+		{"cuDeviceGetName fails", "cuDeviceGetName"},
+		{"cuDeviceTotalMem_v2 fails", "cuDeviceTotalMem_v2"},
+		{"cuDeviceGetAttribute fails", "cuDeviceGetAttribute"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
