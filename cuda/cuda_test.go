@@ -4,8 +4,17 @@ import (
 	"errors"
 	"testing"
 
+	"go.uber.org/goleak"
+
 	"github.com/eitamring/gocudrv/cudasys"
 )
+
+// TestMain verifies that no goroutines outlive the test binary. The cuda
+// package will own a pinned executor goroutine in the next milestone, so
+// the check is in place from the start.
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
 
 func resetDriver() {
 	mu.Lock()
