@@ -88,6 +88,14 @@ func (c *Context) Synchronize(ctx context.Context) error {
 // point for future memory, module, stream, and launch code so every CUDA
 // call that needs context affinity routes through the same pinned thread.
 func (c *Context) do(ctx context.Context, fn func() error) error {
+	return c.doWith(ctx, fn, false)
+}
+
+func (c *Context) doWait(ctx context.Context, fn func() error) error {
+	return c.doWith(ctx, fn, true)
+}
+
+func (c *Context) doWith(ctx context.Context, fn func() error, waitAfterSubmit bool) error {
 	if c == nil || c.exec == nil {
 		return ErrNilContext
 	}
@@ -98,6 +106,9 @@ func (c *Context) do(ctx context.Context, fn func() error) error {
 	defer c.opMu.RUnlock()
 	if c.closed.Load() {
 		return ErrContextClosed
+	}
+	if waitAfterSubmit {
+		return c.exec.DoCtxWait(ctx, fn)
 	}
 	return c.exec.DoCtx(ctx, fn)
 }

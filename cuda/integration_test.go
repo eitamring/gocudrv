@@ -53,6 +53,53 @@ func TestRealPrimaryContext(t *testing.T) {
 	}
 }
 
+func TestRealMemoryRoundTrip(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+
+	const n = 1024
+	src := make([]float32, n)
+	for i := range src {
+		src[i] = float32(i) * 1.5
+	}
+
+	buf, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc: %v", err)
+	}
+	t.Cleanup(func() { _ = buf.Close() })
+
+	if got := buf.Len(); got != n {
+		t.Errorf("Len = %d, want %d", got, n)
+	}
+	if got := buf.Bytes(); got != n*4 {
+		t.Errorf("Bytes = %d, want %d", got, n*4)
+	}
+
+	bg := context.Background()
+	if err := buf.CopyFrom(bg, src); err != nil {
+		t.Fatalf("CopyFrom: %v", err)
+	}
+	got := make([]float32, n)
+	if err := buf.CopyTo(bg, got); err != nil {
+		t.Fatalf("CopyTo: %v", err)
+	}
+	for i := range src {
+		if got[i] != src[i] {
+			t.Fatalf("round-trip mismatch at %d: got %v, want %v", i, got[i], src[i])
+		}
+	}
+	t.Logf("round-tripped %d float32 (%d bytes) through device memory", n, n*4)
+}
+
 func TestRealDeviceEnum(t *testing.T) {
 	initOrSkip(t)
 	n, err := DeviceCount()

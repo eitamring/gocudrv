@@ -35,6 +35,10 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		{"cuCtxSynchronize fails", "cuCtxSynchronize"},
 		{"cuDevicePrimaryCtxRetain fails", "cuDevicePrimaryCtxRetain"},
 		{"cuDevicePrimaryCtxRelease_v2 fails", "cuDevicePrimaryCtxRelease_v2"},
+		{"cuMemAlloc_v2 fails", "cuMemAlloc_v2"},
+		{"cuMemFree_v2 fails", "cuMemFree_v2"},
+		{"cuMemcpyHtoD_v2 fails", "cuMemcpyHtoD_v2"},
+		{"cuMemcpyDtoH_v2 fails", "cuMemcpyDtoH_v2"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
