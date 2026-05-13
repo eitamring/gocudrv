@@ -4,4 +4,4 @@ go 1.22
 
 require github.com/ebitengine/purego v0.10.0
 
-require go.uber.org/goleak v1.3.0 // indirect
+require go.uber.org/goleak v1.3.0

@@ -69,6 +69,44 @@ values. Named attributes currently exposed:
 
 Pass `cuda.DeviceAttribute(value)` for CUDA attributes not yet named.
 
+## contexts
+
+A `Context` wraps the device's primary context and a pinned-thread executor.
+Every driver call that needs context affinity routes through that thread so
+"current context" stays stable across goroutines.
+
+```go
+dev, _ := cuda.GetDevice(0)
+ctx, err := dev.Primary()
+if err != nil {
+    log.Fatal(err)
+}
+defer ctx.Close()
+
+if err := ctx.Synchronize(context.Background()); err != nil {
+    log.Fatal(err)
+}
+```
+
+- `(*Device).Primary() (*Context, error)` retains the primary context and
+  starts the executor. Rolls back retain and stops the executor on failure.
+- `(*Context).Device() *Device` returns the device this context was created
+  on.
+- `(*Context).Synchronize(ctx context.Context) error` blocks until all
+  preceding GPU work finishes or `ctx` is canceled. Canceling stops the
+  wait; the GPU work continues regardless.
+- `(*Context).Close() error` releases the primary-context retain and stops
+  the executor. Idempotent; subsequent calls return the first call's error.
+  Methods called after `Close` return `ErrContextClosed`.
+
+Nil `*Context` methods return `ErrNilContext` when they return an error, and
+`Device` returns nil.
+
+`Primary` and `Close` do not take a `context.Context`: they mutate
+ownership state and partial completion would leak retain counts. Methods
+that only wait (`Synchronize`, and future memory and stream operations)
+take `context.Context`.
+
 ## errors
 
 `cuda.Error` is an alias for `cudaresult.Error`. It carries the raw CUDA result
@@ -98,6 +136,8 @@ Go-side sentinels:
 
 - `ErrInvalidOrdinal`: `GetDevice` rejected the ordinal before calling CUDA.
 - `ErrNilDevice`: a method was called on a nil `*Device`.
+- `ErrNilContext`: a method was called on a nil `*Context`.
+- `ErrContextClosed`: a method was called on a `*Context` after `Close`.
 
 Returned CUDA errors for codes outside the table still match with:
 

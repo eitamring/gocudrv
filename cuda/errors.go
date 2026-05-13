@@ -1,6 +1,17 @@
 package cuda
 
-import "github.com/eitamring/gocudrv/cudaresult"
+import (
+	"errors"
+
+	"github.com/eitamring/gocudrv/cudaresult"
+)
+
+// ErrContextClosed is returned by Context methods after Close has been
+// called. It is a Go-side sentinel, not a CUDA result code.
+var (
+	ErrContextClosed = errors.New("cuda: context is closed")
+	ErrNilContext    = errors.New("cuda: nil context")
+)
 
 // Error is the typed error returned for non-success CUDA result codes.
 // Compare with errors.Is against the sentinels below.

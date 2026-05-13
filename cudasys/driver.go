@@ -12,14 +12,19 @@ import (
 // shared-library handle. Fields are public so tests can construct a fake
 // Driver without touching purego.
 type Driver struct {
-	lib                  dynload.Library
-	CuInit               func(flags uint32) CUresult
-	CuDriverGetVersion   func(version *int32) CUresult
-	CuDeviceGetCount     func(count *int32) CUresult
-	CuDeviceGet          func(device *CUdevice, ordinal int32) CUresult
-	CuDeviceGetName      func(name *byte, length int32, dev CUdevice) CUresult
-	CuDeviceTotalMem     func(bytes *uint64, dev CUdevice) CUresult
-	CuDeviceGetAttribute func(value *int32, attr int32, dev CUdevice) CUresult
+	lib                       dynload.Library
+	CuInit                    func(flags uint32) CUresult
+	CuDriverGetVersion        func(version *int32) CUresult
+	CuDeviceGetCount          func(count *int32) CUresult
+	CuDeviceGet               func(device *CUdevice, ordinal int32) CUresult
+	CuDeviceGetName           func(name *byte, length int32, dev CUdevice) CUresult
+	CuDeviceTotalMem          func(bytes *uint64, dev CUdevice) CUresult
+	CuDeviceGetAttribute      func(value *int32, attr int32, dev CUdevice) CUresult
+	CuCtxGetCurrent           func(ctx *CUcontext) CUresult
+	CuCtxSetCurrent           func(ctx CUcontext) CUresult
+	CuCtxSynchronize          func() CUresult
+	CuDevicePrimaryCtxRetain  func(ctx *CUcontext, dev CUdevice) CUresult
+	CuDevicePrimaryCtxRelease func(dev CUdevice) CUresult
 }
 
 // bindFn is the symbol-binding function used by Load. Overridable in tests.
@@ -41,6 +46,11 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuDeviceGetName, "cuDeviceGetName"},
 		{&d.CuDeviceTotalMem, "cuDeviceTotalMem_v2"},
 		{&d.CuDeviceGetAttribute, "cuDeviceGetAttribute"},
+		{&d.CuCtxGetCurrent, "cuCtxGetCurrent"},
+		{&d.CuCtxSetCurrent, "cuCtxSetCurrent"},
+		{&d.CuCtxSynchronize, "cuCtxSynchronize"},
+		{&d.CuDevicePrimaryCtxRetain, "cuDevicePrimaryCtxRetain"},
+		{&d.CuDevicePrimaryCtxRelease, "cuDevicePrimaryCtxRelease_v2"},
 	}
 	for _, b := range binds {
 		if err := bindFn(lib, b.fn, b.name); err != nil {
