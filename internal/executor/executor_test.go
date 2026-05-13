@@ -100,6 +100,42 @@ func TestDoAfterClose(t *testing.T) {
 	}
 }
 
+func TestCloseWaitsForSubmittedWork(t *testing.T) {
+	e := New()
+
+	started := make(chan struct{})
+	finish := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- e.Do(func() error {
+			close(started)
+			<-finish
+			return nil
+		})
+	}()
+
+	<-started
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- e.Close() }()
+
+	select {
+	case err := <-closeDone:
+		t.Fatalf("Close returned before submitted work finished: %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+
+	close(finish)
+	if err := <-done; err != nil {
+		t.Fatalf("submitted work: %v", err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if err := e.Do(func() error { return nil }); !errors.Is(err, ErrExecutorClosed) {
+		t.Errorf("Do after Close err = %v, want ErrExecutorClosed", err)
+	}
+}
+
 func TestDoCtxCanceledBeforeSubmit(t *testing.T) {
 	e := New()
 	t.Cleanup(func() { _ = e.Close() })

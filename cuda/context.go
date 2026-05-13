@@ -19,6 +19,7 @@ type Context struct {
 	driver    *cudasys.Driver
 	raw       cudasys.CUcontext
 	exec      *executor.Executor
+	opMu      sync.RWMutex
 	closed    atomic.Bool
 	closeOnce sync.Once
 	closeErr  error
@@ -95,10 +96,18 @@ func (c *Context) do(ctx context.Context, fn func() error) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	c.opMu.RLock()
+	defer c.opMu.RUnlock()
 	if c.closed.Load() {
 		return ErrContextClosed
 	}
 	return c.exec.DoCtx(ctx, fn)
+}
+
+func (c *Context) closeOnExecutor() error {
+	clearErr := cudaresult.CtxSetCurrent(c.driver, 0)
+	releaseErr := cudaresult.PrimaryCtxRelease(c.driver, c.device.handle)
+	return errors.Join(clearErr, releaseErr)
 }
 
 // Close releases the primary context retain and stops the executor.
@@ -109,12 +118,10 @@ func (c *Context) Close() error {
 		return ErrNilContext
 	}
 	c.closeOnce.Do(func() {
+		c.opMu.Lock()
+		defer c.opMu.Unlock()
 		c.closed.Store(true)
-		c.closeErr = c.exec.Do(func() error {
-			clearErr := cudaresult.CtxSetCurrent(c.driver, 0)
-			releaseErr := cudaresult.PrimaryCtxRelease(c.driver, c.device.handle)
-			return errors.Join(clearErr, releaseErr)
-		})
+		c.closeErr = c.exec.Do(c.closeOnExecutor)
 		_ = c.exec.Close()
 	})
 	return c.closeErr

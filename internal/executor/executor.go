@@ -43,6 +43,8 @@ type Executor struct {
 	tasks     chan task
 	quit      chan struct{}
 	done      chan struct{}
+	mu        sync.RWMutex
+	closed    bool
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -100,22 +102,26 @@ func (e *Executor) DoCtx(ctx context.Context, fn func() error) error {
 		return err
 	}
 	res := make(chan error, 1)
+	e.mu.RLock()
+	if e.closed {
+		e.mu.RUnlock()
+		return ErrExecutorClosed
+	}
 	select {
 	case e.tasks <- task{fn: fn, result: res}:
 	case <-ctx.Done():
+		e.mu.RUnlock()
 		return ctx.Err()
-	case <-e.quit:
-		return ErrExecutorClosed
 	case <-e.done:
+		e.mu.RUnlock()
 		return ErrExecutorClosed
 	}
+	e.mu.RUnlock()
 	select {
 	case err := <-res:
 		return err
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-e.done:
-		return ErrExecutorClosed
 	}
 }
 
@@ -124,7 +130,10 @@ func (e *Executor) DoCtx(ctx context.Context, fn func() error) error {
 // (if any) is returned on every subsequent call.
 func (e *Executor) Close() error {
 	e.closeOnce.Do(func() {
+		e.mu.Lock()
+		e.closed = true
 		close(e.quit)
+		e.mu.Unlock()
 		<-e.done
 	})
 	return e.closeErr

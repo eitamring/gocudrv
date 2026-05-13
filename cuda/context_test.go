@@ -258,6 +258,66 @@ func TestCloseReleasesWhenClearCurrentFails(t *testing.T) {
 	}
 }
 
+func TestCloseWaitsForInFlightContextWorkBeforeRelease(t *testing.T) {
+	releaseCalls := atomic.Int32{}
+	syncStarted := make(chan struct{})
+	syncFinish := make(chan struct{})
+	installDriver(t, &cudasys.Driver{
+		CuDeviceGetCount: func(n *int32) cudasys.CUresult { *n = 1; return cudasys.CUDA_SUCCESS },
+		CuDeviceGet: func(dev *cudasys.CUdevice, _ int32) cudasys.CUresult {
+			*dev = 0
+			return cudasys.CUDA_SUCCESS
+		},
+		CuDevicePrimaryCtxRetain: func(ctx *cudasys.CUcontext, _ cudasys.CUdevice) cudasys.CUresult {
+			*ctx = 0xC0FFEE
+			return cudasys.CUDA_SUCCESS
+		},
+		CuCtxSetCurrent: func(cudasys.CUcontext) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
+		CuDevicePrimaryCtxRelease: func(cudasys.CUdevice) cudasys.CUresult {
+			releaseCalls.Add(1)
+			return cudasys.CUDA_SUCCESS
+		},
+		CuCtxSynchronize: func() cudasys.CUresult {
+			close(syncStarted)
+			<-syncFinish
+			return cudasys.CUDA_SUCCESS
+		},
+	})
+
+	dev, _ := GetDevice(0)
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("primary: %v", err)
+	}
+
+	syncDone := make(chan error, 1)
+	go func() { syncDone <- ctx.Synchronize(context.Background()) }()
+	<-syncStarted
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- ctx.Close() }()
+
+	select {
+	case err := <-closeDone:
+		t.Fatalf("Close returned before in-flight sync finished: %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+	if releaseCalls.Load() != 0 {
+		t.Fatalf("release ran while sync was still in flight")
+	}
+
+	close(syncFinish)
+	if err := <-syncDone; err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if releaseCalls.Load() != 1 {
+		t.Errorf("release calls = %d, want 1", releaseCalls.Load())
+	}
+}
+
 func TestCloseReportsReleaseFailure(t *testing.T) {
 	installDriver(t, &cudasys.Driver{
 		CuDeviceGetCount: func(n *int32) cudasys.CUresult { *n = 1; return cudasys.CUDA_SUCCESS },
