@@ -16,6 +16,12 @@ var (
 	loadFn = defaultLoad
 )
 
+func currentDriver() *cudasys.Driver {
+	mu.Lock()
+	defer mu.Unlock()
+	return driver
+}
+
 func defaultLoad() (*cudasys.Driver, error) {
 	lib, err := dynload.OpenAny(dynload.Default(), platform.LibraryCandidates())
 	if err != nil {
