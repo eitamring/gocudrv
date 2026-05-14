@@ -150,6 +150,14 @@ if err := buf.CopyTo(bg, dst); err != nil {
   to device. Lengths must match.
 - `(*Buffer[T]).CopyTo(ctx context.Context, dst []T) error` copies device
   to host. Same shape.
+- `(*Buffer[T]).CopyFromHost(ctx context.Context, src *HostBuffer[T]) error`
+  copies from a pinned `HostBuffer`. Holds the host buffer's read lock for
+  the duration of the copy so `HostBuffer.Close` cannot free the pinned
+  memory while CUDA is still reading. Prefer this over `CopyFrom` with
+  `host.Slice()` when the source is pinned.
+- `(*Buffer[T]).CopyToHost(ctx context.Context, dst *HostBuffer[T]) error`
+  copies to a pinned `HostBuffer`. Same lock-holding guarantee. Prefer
+  over `CopyTo` with `host.Slice()` when the destination is pinned.
 
 Two free-function wrappers exist for callers who prefer the CUDA-style
 naming:
@@ -178,6 +186,66 @@ executor and returns `ErrContextClosed`; CUDA reclaims the device memory
 when the primary-context retain count drops to zero, but the wrapper
 cannot guarantee that ordering. Pair every `Alloc` with `defer buf.Close()`
 and close every buffer before the context.
+
+## pinned host memory
+
+`HostBuffer[T]` is a typed handle to a region of page-locked (pinned)
+host memory owned by a `Context`. CUDA can DMA directly to and from this
+memory, skipping its internal staging buffer, so transfers are faster
+than copies from pageable Go slices. Pinned memory is also recommended
+for predictable async-copy overlap and best throughput in the streams
+PR coming later; pageable memory is supported but tends to be slower
+and less predictable.
+
+```go
+host, err := cuda.AllocHost[float32](ctx, 1024)
+if err != nil {
+    log.Fatal(err)
+}
+defer host.Close()
+
+s := host.Slice()
+for i := range s {
+    s[i] = float32(i)
+}
+
+// Prefer the *Host methods when copying to/from a HostBuffer. They hold
+// the host buffer's read lock for the duration of the copy, so it cannot
+// be closed (and the pinned memory cannot be freed) while CUDA reads it.
+if err := buf.CopyFromHost(context.Background(), host); err != nil {
+    log.Fatal(err)
+}
+```
+
+- `func AllocHost[T Supported](ctx *Context, n int) (*HostBuffer[T], error)`
+  allocates `n` elements of pinned host memory. Rejects nil context, closed
+  context, `n <= 0`, and byte-size overflow.
+- `(*HostBuffer[T]).Len() int` returns the element count.
+- `(*HostBuffer[T]).Bytes() uint64` returns the total byte size.
+- `(*HostBuffer[T]).Slice() []T` returns a `[]T` view backed by the pinned
+  memory. The slice can be read and written directly. Returns `nil` if the
+  buffer is nil or has been closed.
+- `(*HostBuffer[T]).Close() error` releases the pinned memory. Idempotent
+  after a successful free; failed frees leave the buffer open so `Close`
+  can be retried.
+
+The slice returned by `Slice` becomes invalid after `Close`. Do not retain
+it past that point; using it after `Close` reads or writes freed memory.
+
+Use `Buffer.CopyFromHost` / `CopyToHost` to move data between a `Buffer`
+and a `HostBuffer`. They lock the host buffer against concurrent `Close`
+for the duration of the copy. `Buffer.CopyFrom` / `CopyTo` with
+`host.Slice()` still work for CPU-only access patterns, but they cannot
+prevent another goroutine from closing the `HostBuffer` mid-copy, so the
+typed methods are the safe path for CUDA transfers.
+
+Pinned memory is an optional faster path, not a replacement. Pageable Go
+slices are still accepted by `Buffer.CopyFrom` / `CopyTo`. Use pinned
+memory for repeated large transfers and for async copies; for tiny
+one-off copies the pageable path is fine.
+
+Lifetime rule mirrors `Buffer`: a `HostBuffer` must be closed before its
+owning `Context` is closed.
 
 ## errors
 
@@ -210,10 +278,10 @@ Go-side sentinels:
 - `ErrNilDevice`: a method was called on a nil `*Device`.
 - `ErrNilContext`: a method was called on a nil `*Context`.
 - `ErrContextClosed`: a method was called on a `*Context` after `Close`.
-- `ErrNilBuffer`: a method was called on a nil `*Buffer[T]`.
-- `ErrBufferClosed`: a method was called on a `*Buffer[T]` after `Close`.
-- `ErrLengthMismatch`: a copy was given mismatched or empty slices.
-- `ErrInvalidLength`: `Alloc` was given a non-positive or overflowing element count.
+- `ErrNilBuffer`: a method was called on a nil `*Buffer[T]` or nil `*HostBuffer[T]`.
+- `ErrBufferClosed`: a method was called on a `*Buffer[T]` or `*HostBuffer[T]` after `Close`.
+- `ErrLengthMismatch`: a copy was given mismatched or empty slices/buffers.
+- `ErrInvalidLength`: `Alloc` or `AllocHost` was given a non-positive or overflowing element count.
 
 Returned CUDA errors for codes outside the table still match with:
 
