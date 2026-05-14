@@ -179,6 +179,55 @@ when the primary-context retain count drops to zero, but the wrapper
 cannot guarantee that ordering. Pair every `Alloc` with `defer buf.Close()`
 and close every buffer before the context.
 
+## pinned host memory
+
+`HostBuffer[T]` is a typed handle to a region of page-locked (pinned)
+host memory owned by a `Context`. CUDA can DMA directly to and from this
+memory, skipping its internal staging buffer, so transfers are faster
+than copies from pageable Go slices. Pinned memory is also required for
+asynchronous stream copies in a later PR.
+
+```go
+host, err := cuda.AllocHost[float32](ctx, 1024)
+if err != nil {
+    log.Fatal(err)
+}
+defer host.Close()
+
+s := host.Slice()
+for i := range s {
+    s[i] = float32(i)
+}
+
+if err := buf.CopyFrom(context.Background(), host.Slice()); err != nil {
+    log.Fatal(err)
+}
+```
+
+- `func AllocHost[T Supported](ctx *Context, n int) (*HostBuffer[T], error)`
+  allocates `n` elements of pinned host memory. Rejects nil context, closed
+  context, `n <= 0`, and byte-size overflow.
+- `(*HostBuffer[T]).Len() int` returns the element count.
+- `(*HostBuffer[T]).Bytes() uint64` returns the total byte size.
+- `(*HostBuffer[T]).Slice() []T` returns a `[]T` view backed by the pinned
+  memory. The slice can be read and written directly. Returns `nil` if the
+  buffer is nil or has been closed.
+- `(*HostBuffer[T]).Close() error` releases the pinned memory. Idempotent
+  after a successful free; failed frees leave the buffer open so `Close`
+  can be retried.
+
+The slice returned by `Slice` becomes invalid after `Close`. Do not retain
+it past that point; using it after `Close` reads or writes freed memory.
+
+Pinned memory is an optional faster path, not a replacement. The existing
+`Buffer.CopyFrom` and `Buffer.CopyTo` accept any `[]T`, so pinned slices
+and pageable Go slices use the same API. Use pinned memory for repeated
+large transfers and for future async copies; for tiny one-off copies the
+pageable path is fine.
+
+Lifetime rule mirrors `Buffer`: a `HostBuffer` must be closed before its
+owning `Context` is closed.
+
 ## errors
 
 `cuda.Error` is an alias for `cudaresult.Error`. It carries the raw CUDA result

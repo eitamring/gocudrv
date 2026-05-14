@@ -39,6 +39,8 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		{"cuMemFree_v2 fails", "cuMemFree_v2"},
 		{"cuMemcpyHtoD_v2 fails", "cuMemcpyHtoD_v2"},
 		{"cuMemcpyDtoH_v2 fails", "cuMemcpyDtoH_v2"},
+		{"cuMemAllocHost_v2 fails", "cuMemAllocHost_v2"},
+		{"cuMemFreeHost fails", "cuMemFreeHost"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

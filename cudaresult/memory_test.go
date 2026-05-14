@@ -156,6 +156,111 @@ func TestMemcpyHtoD(t *testing.T) {
 	}
 }
 
+func TestMemAllocHost(t *testing.T) {
+	var storage [16]byte
+
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		bytes   uint64
+		wantErr error
+		wantNil bool
+	}{
+		{"nil driver", nil, 16, ErrNotInitialized, true},
+		{"nil func", &cudasys.Driver{}, 16, ErrNotInitialized, true},
+		{
+			"success",
+			&cudasys.Driver{CuMemAllocHost: func(pp **byte, b uint64) cudasys.CUresult {
+				if b != 16 {
+					t.Errorf("bytes = %d, want 16", b)
+				}
+				*pp = &storage[0]
+				return cudasys.CUDA_SUCCESS
+			}},
+			16,
+			nil,
+			false,
+		},
+		{
+			"out of memory",
+			&cudasys.Driver{CuMemAllocHost: func(**byte, uint64) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_OUT_OF_MEMORY
+			}},
+			16,
+			ErrOutOfMemory,
+			true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := MemAllocHost(tc.driver, tc.bytes)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Errorf("err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if tc.wantNil {
+				if got != nil {
+					t.Errorf("got non-nil pointer, want nil")
+				}
+				return
+			}
+			if got != &storage[0] {
+				t.Errorf("pointer = %p, want %p", got, &storage[0])
+			}
+		})
+	}
+}
+
+func TestMemFreeHost(t *testing.T) {
+	var storage [16]byte
+	target := &storage[0]
+
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		wantErr error
+	}{
+		{"nil driver", nil, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuMemFreeHost: func(p *byte) cudasys.CUresult {
+				if p != target {
+					t.Errorf("ptr = %p, want %p", p, target)
+				}
+				return cudasys.CUDA_SUCCESS
+			}},
+			nil,
+		},
+		{
+			"invalid value",
+			&cudasys.Driver{CuMemFreeHost: func(*byte) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}},
+			ErrInvalidValue,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := MemFreeHost(tc.driver, target)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Errorf("unexpected err: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestMemcpyDtoH(t *testing.T) {
 	dstData := make([]byte, 5)
 	dst := &dstData[0]
