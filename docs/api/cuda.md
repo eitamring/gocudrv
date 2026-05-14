@@ -107,6 +107,78 @@ ownership state and partial completion would leak retain counts. Methods
 that only wait (`Synchronize`, and future memory and stream operations)
 take `context.Context`.
 
+## memory
+
+`Buffer[T]` is a typed handle to a region of device memory owned by a
+`Context`. `T` must satisfy `Supported`, which is restricted to fixed-size
+numeric scalars (`int8/16/32/64`, `uint8/16/32/64`, `float32`, `float64`).
+Structs and unsized `int`/`uint` are intentionally excluded to avoid
+alignment hazards.
+
+```go
+buf, err := cuda.Alloc[float32](ctx, 1024)
+if err != nil {
+    log.Fatal(err)
+}
+defer buf.Close()
+
+src := make([]float32, 1024)
+for i := range src {
+    src[i] = float32(i)
+}
+
+bg := context.Background()
+if err := buf.CopyFrom(bg, src); err != nil {
+    log.Fatal(err)
+}
+
+dst := make([]float32, 1024)
+if err := buf.CopyTo(bg, dst); err != nil {
+    log.Fatal(err)
+}
+```
+
+- `func Alloc[T Supported](ctx *Context, n int) (*Buffer[T], error)`
+  allocates `n` elements. Rejects `nil` context, closed context, `n <= 0`,
+  and byte-size overflow.
+- `(*Buffer[T]).Len() int` returns the element count.
+- `(*Buffer[T]).Bytes() uint64` returns the total byte size.
+- `(*Buffer[T]).Close() error` frees the device memory. Idempotent after a
+  successful free; failed frees leave the buffer open so `Close` can be
+  retried.
+- `(*Buffer[T]).CopyFrom(ctx context.Context, src []T) error` copies host
+  to device. Lengths must match.
+- `(*Buffer[T]).CopyTo(ctx context.Context, dst []T) error` copies device
+  to host. Same shape.
+
+Two free-function wrappers exist for callers who prefer the CUDA-style
+naming:
+
+```go
+func CopyHtoD[T Supported](ctx context.Context, dst *Buffer[T], src []T) error
+func CopyDtoH[T Supported](ctx context.Context, dst []T, src *Buffer[T]) error
+```
+
+Both delegate to the methods. Prefer the method form in new code.
+
+`Alloc` and `Buffer.Close` do not take `context.Context` for the same
+reason as `Primary` and `Context.Close`: they manage ownership and partial
+completion would leak. The copy methods take `context.Context`, but only to
+cancel before the operation is submitted. Cancellation semantics:
+
+- If `ctx` is already canceled before the call submits to the executor,
+  the underlying CUDA copy does not run and the call returns `ctx.Err()`.
+- If `ctx` is canceled after submission, the call still waits for the copy to
+  finish. This keeps the host slice exclusively owned by the call while CUDA is
+  reading or writing it.
+
+**Lifetime rule:** a `Buffer` must be closed before its owning `Context`
+is closed. After the `Context` is closed, `Buffer.Close` cannot reach the
+executor and returns `ErrContextClosed`; CUDA reclaims the device memory
+when the primary-context retain count drops to zero, but the wrapper
+cannot guarantee that ordering. Pair every `Alloc` with `defer buf.Close()`
+and close every buffer before the context.
+
 ## errors
 
 `cuda.Error` is an alias for `cudaresult.Error`. It carries the raw CUDA result
@@ -138,6 +210,10 @@ Go-side sentinels:
 - `ErrNilDevice`: a method was called on a nil `*Device`.
 - `ErrNilContext`: a method was called on a nil `*Context`.
 - `ErrContextClosed`: a method was called on a `*Context` after `Close`.
+- `ErrNilBuffer`: a method was called on a nil `*Buffer[T]`.
+- `ErrBufferClosed`: a method was called on a `*Buffer[T]` after `Close`.
+- `ErrLengthMismatch`: a copy was given mismatched or empty slices.
+- `ErrInvalidLength`: `Alloc` was given a non-positive or overflowing element count.
 
 Returned CUDA errors for codes outside the table still match with:
 

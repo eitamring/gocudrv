@@ -53,6 +53,10 @@ type Driver struct {
     CuCtxSynchronize          func() CUresult
     CuDevicePrimaryCtxRetain  func(ctx *CUcontext, dev CUdevice) CUresult
     CuDevicePrimaryCtxRelease func(dev CUdevice) CUresult
+    CuMemAlloc                func(devPtr *CUdeviceptr, bytesize uint64) CUresult
+    CuMemFree                 func(devPtr CUdeviceptr) CUresult
+    CuMemcpyHtoD              func(dst CUdeviceptr, src *byte, byteCount uint64) CUresult
+    CuMemcpyDtoH              func(dst *byte, src CUdeviceptr, byteCount uint64) CUresult
 }
 ```
 
@@ -70,6 +74,10 @@ type Driver struct {
 - `cuCtxSynchronize`
 - `cuDevicePrimaryCtxRetain`
 - `cuDevicePrimaryCtxRelease_v2`
+- `cuMemAlloc_v2`
+- `cuMemFree_v2`
+- `cuMemcpyHtoD_v2`
+- `cuMemcpyDtoH_v2`
 
 If any bind fails, `Load` closes the library before returning. On successful
 initialization, the package-global `cuda` driver keeps the handle alive.
@@ -105,5 +113,25 @@ GPU work; the function still runs to completion on the executor thread and
 its result is discarded. The result channel is buffered so the worker does
 not block when the caller has walked away.
 
+Memory copies use a stricter executor path: cancellation can stop submission,
+but once a copy is submitted the caller waits until it finishes. This prevents
+callers from mutating or reusing Go host slices while CUDA is still reading or
+writing them.
+
 Panics inside `fn` are recovered and surfaced as `*executor.PanicError`;
 the executor stays alive so the caller can keep using it or close it.
+
+## host pointers in copy paths
+
+`cudasys` declares host-buffer pointers as `*byte`. The `cuda` layer holds a
+typed Go slice (`[]T`) and converts to `*byte` at the call site:
+
+```go
+srcPtr := (*byte)(unsafe.Pointer(&src[0]))
+// ... submit copy task ...
+runtime.KeepAlive(src)
+```
+
+`runtime.KeepAlive` keeps the slice reachable until after the submitted copy
+finishes. Empty slices are rejected at the `cuda` layer before any unsafe
+conversion runs.

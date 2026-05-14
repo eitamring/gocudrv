@@ -25,6 +25,10 @@ type Driver struct {
 	CuCtxSynchronize          func() CUresult
 	CuDevicePrimaryCtxRetain  func(ctx *CUcontext, dev CUdevice) CUresult
 	CuDevicePrimaryCtxRelease func(dev CUdevice) CUresult
+	CuMemAlloc                func(devPtr *CUdeviceptr, bytesize uint64) CUresult
+	CuMemFree                 func(devPtr CUdeviceptr) CUresult
+	CuMemcpyHtoD              func(dst CUdeviceptr, src *byte, byteCount uint64) CUresult
+	CuMemcpyDtoH              func(dst *byte, src CUdeviceptr, byteCount uint64) CUresult
 }
 
 // bindFn is the symbol-binding function used by Load. Overridable in tests.
@@ -51,6 +55,10 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuCtxSynchronize, "cuCtxSynchronize"},
 		{&d.CuDevicePrimaryCtxRetain, "cuDevicePrimaryCtxRetain"},
 		{&d.CuDevicePrimaryCtxRelease, "cuDevicePrimaryCtxRelease_v2"},
+		{&d.CuMemAlloc, "cuMemAlloc_v2"},
+		{&d.CuMemFree, "cuMemFree_v2"},
+		{&d.CuMemcpyHtoD, "cuMemcpyHtoD_v2"},
+		{&d.CuMemcpyDtoH, "cuMemcpyDtoH_v2"},
 	}
 	for _, b := range binds {
 		if err := bindFn(lib, b.fn, b.name); err != nil {

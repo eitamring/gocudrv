@@ -6,11 +6,15 @@ import (
 	"github.com/eitamring/gocudrv/cudaresult"
 )
 
-// ErrContextClosed is returned by Context methods after Close has been
-// called. It is a Go-side sentinel, not a CUDA result code.
+// Go-side sentinels that signal wrapper-level rejections separate from CUDA
+// result codes. Use errors.Is to match.
 var (
-	ErrContextClosed = errors.New("cuda: context is closed")
-	ErrNilContext    = errors.New("cuda: nil context")
+	ErrContextClosed  = errors.New("cuda: context is closed")
+	ErrNilContext     = errors.New("cuda: nil context")
+	ErrNilBuffer      = errors.New("cuda: nil buffer")
+	ErrBufferClosed   = errors.New("cuda: buffer is closed")
+	ErrLengthMismatch = errors.New("cuda: length mismatch")
+	ErrInvalidLength  = errors.New("cuda: invalid length")
 )
 
 // Error is the typed error returned for non-success CUDA result codes.
