@@ -160,6 +160,61 @@ func (b *Buffer[T]) CopyTo(ctx context.Context, dst []T) error {
 	return err
 }
 
+// CopyFromHost copies len(src) elements from a pinned HostBuffer into the
+// device buffer. Unlike CopyFrom with a raw []T, this method holds the
+// host buffer's read lock for the duration of the copy, so the pinned
+// memory cannot be freed by HostBuffer.Close while CUDA is reading it.
+// Prefer this method when the source is pinned.
+func (b *Buffer[T]) CopyFromHost(ctx context.Context, src *HostBuffer[T]) error {
+	if b == nil || src == nil {
+		return ErrNilBuffer
+	}
+	b.opMu.RLock()
+	defer b.opMu.RUnlock()
+	if b.closed {
+		return ErrBufferClosed
+	}
+	src.opMu.RLock()
+	defer src.opMu.RUnlock()
+	if src.closed {
+		return ErrBufferClosed
+	}
+	if src.length != b.length {
+		return ErrLengthMismatch
+	}
+	bytes := b.bytes
+	return b.ctx.doWait(ctx, func() error {
+		return cudaresult.MemcpyHtoD(b.ctx.driver, b.ptr, src.ptr, bytes)
+	})
+}
+
+// CopyToHost copies b.Len() elements from the device buffer into a pinned
+// HostBuffer. Holds the host buffer's read lock for the duration of the
+// copy so HostBuffer.Close cannot free the pinned memory while CUDA is
+// writing to it. Prefer this method when the destination is pinned.
+func (b *Buffer[T]) CopyToHost(ctx context.Context, dst *HostBuffer[T]) error {
+	if b == nil || dst == nil {
+		return ErrNilBuffer
+	}
+	b.opMu.RLock()
+	defer b.opMu.RUnlock()
+	if b.closed {
+		return ErrBufferClosed
+	}
+	dst.opMu.RLock()
+	defer dst.opMu.RUnlock()
+	if dst.closed {
+		return ErrBufferClosed
+	}
+	if dst.length != b.length {
+		return ErrLengthMismatch
+	}
+	bytes := b.bytes
+	return b.ctx.doWait(ctx, func() error {
+		return cudaresult.MemcpyDtoH(b.ctx.driver, dst.ptr, b.ptr, bytes)
+	})
+}
+
 // CopyHtoD is a thin wrapper around (*Buffer[T]).CopyFrom kept for the
 // CUDA-style naming. Prefer the method form in new code.
 func CopyHtoD[T Supported](ctx context.Context, dst *Buffer[T], src []T) error {

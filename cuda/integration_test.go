@@ -100,6 +100,59 @@ func TestRealMemoryRoundTrip(t *testing.T) {
 	t.Logf("round-tripped %d float32 (%d bytes) through device memory", n, n*4)
 }
 
+func TestRealPinnedHostRoundTrip(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+
+	const n = 1024
+	hostA, err := AllocHost[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("AllocHost A: %v", err)
+	}
+	t.Cleanup(func() { _ = hostA.Close() })
+	hostB, err := AllocHost[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("AllocHost B: %v", err)
+	}
+	t.Cleanup(func() { _ = hostB.Close() })
+
+	srcView := hostA.Slice()
+	for i := range srcView {
+		srcView[i] = float32(i) * 0.25
+	}
+
+	dev0, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc device: %v", err)
+	}
+	t.Cleanup(func() { _ = dev0.Close() })
+
+	bg := context.Background()
+	if err := dev0.CopyFromHost(bg, hostA); err != nil {
+		t.Fatalf("CopyFromHost: %v", err)
+	}
+	if err := dev0.CopyToHost(bg, hostB); err != nil {
+		t.Fatalf("CopyToHost: %v", err)
+	}
+
+	a := hostA.Slice()
+	b := hostB.Slice()
+	for i := range a {
+		if a[i] != b[i] {
+			t.Fatalf("round-trip mismatch at %d: a=%v b=%v", i, a[i], b[i])
+		}
+	}
+	t.Logf("round-tripped %d float32 (%d bytes) through pinned host and device buffers", n, n*4)
+}
+
 func TestRealDeviceEnum(t *testing.T) {
 	initOrSkip(t)
 	n, err := DeviceCount()

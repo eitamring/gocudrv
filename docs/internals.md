@@ -57,6 +57,8 @@ type Driver struct {
     CuMemFree                 func(devPtr CUdeviceptr) CUresult
     CuMemcpyHtoD              func(dst CUdeviceptr, src *byte, byteCount uint64) CUresult
     CuMemcpyDtoH              func(dst *byte, src CUdeviceptr, byteCount uint64) CUresult
+    CuMemAllocHost            func(pp **byte, bytesize uint64) CUresult
+    CuMemFreeHost             func(p *byte) CUresult
 }
 ```
 
@@ -78,6 +80,8 @@ type Driver struct {
 - `cuMemFree_v2`
 - `cuMemcpyHtoD_v2`
 - `cuMemcpyDtoH_v2`
+- `cuMemAllocHost_v2`
+- `cuMemFreeHost`
 
 If any bind fails, `Load` closes the library before returning. On successful
 initialization, the package-global `cuda` driver keeps the handle alive.
@@ -135,3 +139,29 @@ runtime.KeepAlive(src)
 `runtime.KeepAlive` keeps the slice reachable until after the submitted copy
 finishes. Empty slices are rejected at the `cuda` layer before any unsafe
 conversion runs.
+
+## pinned host memory
+
+`cuMemAllocHost_v2` returns a host pointer to page-locked memory. The
+`HostBuffer[T]` wrapper stores that pointer plus an element count and
+exposes `Slice() []T` via `unsafe.Slice` over the pinned region. The
+returned slice header points directly at the pinned memory; reads and
+writes are zero-copy.
+
+Pinned memory matters because the CUDA driver can DMA between pinned host
+memory and the device without staging through a pageable bounce buffer.
+It is also recommended for `cuMemcpy*Async` to get predictable overlap
+and best throughput; pageable host regions are accepted by the async
+APIs in current drivers but the behavior is less predictable. The async
+path lands in the streams PR.
+
+`Buffer.CopyFromHost` and `Buffer.CopyToHost` hold the source/destination
+`HostBuffer`'s `sync.RWMutex` read lock across the executor call so
+`HostBuffer.Close` cannot race with an in-flight copy. The raw-slice
+copy methods (`CopyFrom` / `CopyTo` with `host.Slice()`) do not have this
+guarantee because the slice header carries no back-reference to the
+`HostBuffer`; the safe path uses the typed methods.
+
+Both `cuMemAllocHost_v2` and `cuMemFreeHost` run on the context executor
+via the same strict `doWait` path used by `cuMemAlloc_v2` / `cuMemFree_v2`:
+cancellation can stop submission but not abandon an in-flight call.
