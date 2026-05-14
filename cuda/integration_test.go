@@ -136,11 +136,11 @@ func TestRealPinnedHostRoundTrip(t *testing.T) {
 	t.Cleanup(func() { _ = dev0.Close() })
 
 	bg := context.Background()
-	if err := dev0.CopyFrom(bg, hostA.Slice()); err != nil {
-		t.Fatalf("CopyFrom: %v", err)
+	if err := dev0.CopyFromHost(bg, hostA); err != nil {
+		t.Fatalf("CopyFromHost: %v", err)
 	}
-	if err := dev0.CopyTo(bg, hostB.Slice()); err != nil {
-		t.Fatalf("CopyTo: %v", err)
+	if err := dev0.CopyToHost(bg, hostB); err != nil {
+		t.Fatalf("CopyToHost: %v", err)
 	}
 
 	a := hostA.Slice()

@@ -6,6 +6,7 @@ import (
 	"math"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/eitamring/gocudrv/cudasys"
 )
@@ -44,6 +45,13 @@ func (f *hostMemFake) driver(failFree *atomic.Bool) *cudasys.Driver {
 			}
 			return cudasys.CUDA_SUCCESS
 		},
+		CuMemAlloc: func(p *cudasys.CUdeviceptr, _ uint64) cudasys.CUresult {
+			*p = 0xDEAD
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemFree:    func(cudasys.CUdeviceptr) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
+		CuMemcpyHtoD: func(cudasys.CUdeviceptr, *byte, uint64) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
+		CuMemcpyDtoH: func(*byte, cudasys.CUdeviceptr, uint64) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
 	}
 }
 
@@ -360,8 +368,8 @@ func TestNilHostBufferMethods(t *testing.T) {
 }
 
 func TestHostBufferFeedsDeviceCopy(t *testing.T) {
-	// The pinned slice should be acceptable to device.CopyFrom / CopyTo;
-	// verify the existing copy validations accept it.
+	// The safe path: Buffer.CopyFromHost / CopyToHost. Holds the host
+	// buffer's RLock for the duration of the copy.
 	var f hostMemFake
 	installDriver(t, &cudasys.Driver{
 		CuDeviceGetCount: func(n *int32) cudasys.CUresult { *n = 1; return cudasys.CUDA_SUCCESS },
@@ -407,10 +415,270 @@ func TestHostBufferFeedsDeviceCopy(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = dst.Close() })
 
-	if err := dst.CopyFrom(context.Background(), host.Slice()); err != nil {
-		t.Errorf("CopyFrom from pinned: %v", err)
+	if err := dst.CopyFromHost(context.Background(), host); err != nil {
+		t.Errorf("CopyFromHost: %v", err)
 	}
-	if err := dst.CopyTo(context.Background(), host.Slice()); err != nil {
-		t.Errorf("CopyTo to pinned: %v", err)
+	if err := dst.CopyToHost(context.Background(), host); err != nil {
+		t.Errorf("CopyToHost: %v", err)
+	}
+}
+
+func TestCopyFromHostRejections(t *testing.T) {
+	var f hostMemFake
+	var fail atomic.Bool
+	ctx := newHostTestContext(t, &f, &fail)
+
+	dst, err := Alloc[float32](ctx, 4)
+	if err != nil {
+		t.Fatalf("Alloc: %v", err)
+	}
+	t.Cleanup(func() { _ = dst.Close() })
+
+	host, err := AllocHost[float32](ctx, 4)
+	if err != nil {
+		t.Fatalf("AllocHost: %v", err)
+	}
+	mismatched, err := AllocHost[float32](ctx, 8)
+	if err != nil {
+		t.Fatalf("AllocHost mismatched: %v", err)
+	}
+	t.Cleanup(func() { _ = mismatched.Close() })
+
+	cases := []struct {
+		name    string
+		fn      func() error
+		wantErr error
+	}{
+		{
+			"nil dst buffer",
+			func() error {
+				var b *Buffer[float32]
+				return b.CopyFromHost(context.Background(), host)
+			},
+			ErrNilBuffer,
+		},
+		{
+			"nil host buffer",
+			func() error {
+				return dst.CopyFromHost(context.Background(), nil)
+			},
+			ErrNilBuffer,
+		},
+		{
+			"length mismatch",
+			func() error {
+				return dst.CopyFromHost(context.Background(), mismatched)
+			},
+			ErrLengthMismatch,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.fn(); !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+
+	// Closed host buffer: should return ErrBufferClosed rather than the
+	// length-mismatch reported by the nil-slice path on CopyFrom.
+	if err := host.Close(); err != nil {
+		t.Fatalf("close host: %v", err)
+	}
+	if err := dst.CopyFromHost(context.Background(), host); !errors.Is(err, ErrBufferClosed) {
+		t.Errorf("closed host err = %v, want ErrBufferClosed", err)
+	}
+}
+
+// lockTestFake builds a driver where CuMemcpyHtoD and CuMemcpyDtoH block
+// until the test signals them. The fake closes copyEntered the moment a
+// copy starts so the test can synchronize without timing-based sleeps.
+func lockTestFake(f *hostMemFake, htoDEntered, dtoHEntered chan<- struct{}, mayFinish <-chan struct{}) *cudasys.Driver {
+	return &cudasys.Driver{
+		CuDeviceGetCount: func(n *int32) cudasys.CUresult { *n = 1; return cudasys.CUDA_SUCCESS },
+		CuDeviceGet: func(dev *cudasys.CUdevice, _ int32) cudasys.CUresult {
+			*dev = 0
+			return cudasys.CUDA_SUCCESS
+		},
+		CuDevicePrimaryCtxRetain: func(ctx *cudasys.CUcontext, _ cudasys.CUdevice) cudasys.CUresult {
+			*ctx = 0xC0FFEE
+			return cudasys.CUDA_SUCCESS
+		},
+		CuDevicePrimaryCtxRelease: func(cudasys.CUdevice) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
+		CuCtxSetCurrent:           func(cudasys.CUcontext) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
+		CuMemAlloc: func(p *cudasys.CUdeviceptr, _ uint64) cudasys.CUresult {
+			*p = 0xDEAD
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemFree: func(cudasys.CUdeviceptr) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
+		CuMemAllocHost: func(pp **byte, b uint64) cudasys.CUresult {
+			buf := make([]byte, b)
+			f.storage = append(f.storage, buf)
+			*pp = &buf[0]
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemFreeHost: func(*byte) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
+		CuMemcpyHtoD: func(cudasys.CUdeviceptr, *byte, uint64) cudasys.CUresult {
+			if htoDEntered != nil {
+				close(htoDEntered)
+			}
+			<-mayFinish
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemcpyDtoH: func(*byte, cudasys.CUdeviceptr, uint64) cudasys.CUresult {
+			if dtoHEntered != nil {
+				close(dtoHEntered)
+			}
+			<-mayFinish
+			return cudasys.CUDA_SUCCESS
+		},
+	}
+}
+
+func assertCloseBlocksOnCopy(t *testing.T, host *HostBuffer[float32], copyFn func() error, copyEntered <-chan struct{}, mayFinish chan<- struct{}) {
+	t.Helper()
+	copyDone := make(chan error, 1)
+	go func() { copyDone <- copyFn() }()
+
+	// Wait until the copy is observably inside the fake driver call, so
+	// we know the host buffer's RLock is held.
+	select {
+	case <-copyEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("copy did not enter the driver call")
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- host.Close() }()
+
+	// Close must not return while the copy is still running.
+	select {
+	case err := <-closeDone:
+		t.Fatalf("Close returned before copy finished: %v", err)
+	case <-time.After(20 * time.Millisecond):
+		// good: Close is blocked behind the host RLock
+	}
+
+	close(mayFinish)
+	if err := <-copyDone; err != nil {
+		t.Errorf("copy: %v", err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Errorf("close: %v", err)
+	}
+}
+
+func TestCopyFromHostHoldsLockDuringCopy(t *testing.T) {
+	var f hostMemFake
+	entered := make(chan struct{})
+	mayFinish := make(chan struct{})
+	installDriver(t, lockTestFake(&f, entered, nil, mayFinish))
+
+	dev, _ := GetDevice(0)
+	cctx, _ := dev.Primary()
+	t.Cleanup(func() { _ = cctx.Close() })
+
+	host, err := AllocHost[float32](cctx, 4)
+	if err != nil {
+		t.Fatalf("AllocHost: %v", err)
+	}
+	dst, err := Alloc[float32](cctx, 4)
+	if err != nil {
+		t.Fatalf("Alloc: %v", err)
+	}
+	t.Cleanup(func() { _ = dst.Close() })
+
+	assertCloseBlocksOnCopy(t, host, func() error {
+		return dst.CopyFromHost(context.Background(), host)
+	}, entered, mayFinish)
+}
+
+func TestCopyToHostHoldsLockDuringCopy(t *testing.T) {
+	var f hostMemFake
+	entered := make(chan struct{})
+	mayFinish := make(chan struct{})
+	installDriver(t, lockTestFake(&f, nil, entered, mayFinish))
+
+	dev, _ := GetDevice(0)
+	cctx, _ := dev.Primary()
+	t.Cleanup(func() { _ = cctx.Close() })
+
+	host, err := AllocHost[float32](cctx, 4)
+	if err != nil {
+		t.Fatalf("AllocHost: %v", err)
+	}
+	src, err := Alloc[float32](cctx, 4)
+	if err != nil {
+		t.Fatalf("Alloc: %v", err)
+	}
+	t.Cleanup(func() { _ = src.Close() })
+
+	assertCloseBlocksOnCopy(t, host, func() error {
+		return src.CopyToHost(context.Background(), host)
+	}, entered, mayFinish)
+}
+
+func TestCopyToHostRejections(t *testing.T) {
+	var f hostMemFake
+	var fail atomic.Bool
+	ctx := newHostTestContext(t, &f, &fail)
+
+	src, err := Alloc[float32](ctx, 4)
+	if err != nil {
+		t.Fatalf("Alloc: %v", err)
+	}
+	t.Cleanup(func() { _ = src.Close() })
+
+	host, err := AllocHost[float32](ctx, 4)
+	if err != nil {
+		t.Fatalf("AllocHost: %v", err)
+	}
+	mismatched, err := AllocHost[float32](ctx, 8)
+	if err != nil {
+		t.Fatalf("AllocHost mismatched: %v", err)
+	}
+	t.Cleanup(func() { _ = mismatched.Close() })
+
+	cases := []struct {
+		name    string
+		fn      func() error
+		wantErr error
+	}{
+		{
+			"nil src buffer",
+			func() error {
+				var b *Buffer[float32]
+				return b.CopyToHost(context.Background(), host)
+			},
+			ErrNilBuffer,
+		},
+		{
+			"nil host buffer",
+			func() error {
+				return src.CopyToHost(context.Background(), nil)
+			},
+			ErrNilBuffer,
+		},
+		{
+			"length mismatch",
+			func() error {
+				return src.CopyToHost(context.Background(), mismatched)
+			},
+			ErrLengthMismatch,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.fn(); !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+
+	if err := host.Close(); err != nil {
+		t.Fatalf("close host: %v", err)
+	}
+	if err := src.CopyToHost(context.Background(), host); !errors.Is(err, ErrBufferClosed) {
+		t.Errorf("closed host err = %v, want ErrBufferClosed", err)
 	}
 }

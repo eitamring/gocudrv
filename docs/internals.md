@@ -150,9 +150,17 @@ writes are zero-copy.
 
 Pinned memory matters because the CUDA driver can DMA between pinned host
 memory and the device without staging through a pageable bounce buffer.
-It is also a hard prerequisite for `cuMemcpy*Async`; async copies on
-pageable memory silently fall back to synchronous in the driver. The
-async path lands in the streams PR.
+It is also recommended for `cuMemcpy*Async` to get predictable overlap
+and best throughput; pageable host regions are accepted by the async
+APIs in current drivers but the behavior is less predictable. The async
+path lands in the streams PR.
+
+`Buffer.CopyFromHost` and `Buffer.CopyToHost` hold the source/destination
+`HostBuffer`'s `sync.RWMutex` read lock across the executor call so
+`HostBuffer.Close` cannot race with an in-flight copy. The raw-slice
+copy methods (`CopyFrom` / `CopyTo` with `host.Slice()`) do not have this
+guarantee because the slice header carries no back-reference to the
+`HostBuffer`; the safe path uses the typed methods.
 
 Both `cuMemAllocHost_v2` and `cuMemFreeHost` run on the context executor
 via the same strict `doWait` path used by `cuMemAlloc_v2` / `cuMemFree_v2`:
