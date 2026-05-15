@@ -9,12 +9,17 @@ import (
 // Go-side sentinels that signal wrapper-level rejections separate from CUDA
 // result codes. Use errors.Is to match.
 var (
-	ErrContextClosed  = errors.New("cuda: context is closed")
-	ErrNilContext     = errors.New("cuda: nil context")
-	ErrNilBuffer      = errors.New("cuda: nil buffer")
-	ErrBufferClosed   = errors.New("cuda: buffer is closed")
-	ErrLengthMismatch = errors.New("cuda: length mismatch")
-	ErrInvalidLength  = errors.New("cuda: invalid length")
+	ErrContextClosed       = errors.New("cuda: context is closed")
+	ErrNilContext          = errors.New("cuda: nil context")
+	ErrNilBuffer           = errors.New("cuda: nil buffer")
+	ErrBufferClosed        = errors.New("cuda: buffer is closed")
+	ErrLengthMismatch      = errors.New("cuda: length mismatch")
+	ErrInvalidLength       = errors.New("cuda: invalid length")
+	ErrNilModule           = errors.New("cuda: nil module")
+	ErrModuleClosed        = errors.New("cuda: module is closed")
+	ErrEmptyImage          = errors.New("cuda: empty module image")
+	ErrEmptyFunctionName   = errors.New("cuda: empty function name")
+	ErrInvalidFunctionName = errors.New("cuda: function name contains null byte")
 )
 
 // Error is the typed error returned for non-success CUDA result codes.

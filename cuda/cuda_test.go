@@ -2,6 +2,7 @@ package cuda
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	"go.uber.org/goleak"
@@ -10,9 +11,15 @@ import (
 )
 
 // TestMain verifies that no goroutines outlive the test binary. The cuda
-// package will own a pinned executor goroutine in the next milestone, so
-// the check is in place from the start.
+// package will own a pinned executor goroutine in later milestones, so the
+// check is in place from the start. When the cuda_integration build tag is
+// set, the preflight hook also gates against environments where CUDA loads
+// but cuInit is unstable (e.g. WSL without GPU passthrough); see
+// preflight_integration_test.go.
 func TestMain(m *testing.M) {
+	if !preflight() {
+		os.Exit(0)
+	}
 	goleak.VerifyTestMain(m)
 }
 
