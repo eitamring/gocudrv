@@ -31,6 +31,9 @@ type Driver struct {
 	CuMemcpyDtoH              func(dst *byte, src CUdeviceptr, byteCount uint64) CUresult
 	CuMemAllocHost            func(pp **byte, bytesize uint64) CUresult
 	CuMemFreeHost             func(p *byte) CUresult
+	CuModuleLoadData          func(module *CUmodule, image *byte) CUresult
+	CuModuleUnload            func(module CUmodule) CUresult
+	CuModuleGetFunction       func(fn *CUfunction, module CUmodule, name *byte) CUresult
 }
 
 // bindFn is the symbol-binding function used by Load. Overridable in tests.
@@ -63,6 +66,9 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuMemcpyDtoH, "cuMemcpyDtoH_v2"},
 		{&d.CuMemAllocHost, "cuMemAllocHost_v2"},
 		{&d.CuMemFreeHost, "cuMemFreeHost"},
+		{&d.CuModuleLoadData, "cuModuleLoadData"},
+		{&d.CuModuleUnload, "cuModuleUnload"},
+		{&d.CuModuleGetFunction, "cuModuleGetFunction"},
 	}
 	for _, b := range binds {
 		if err := bindFn(lib, b.fn, b.name); err != nil {

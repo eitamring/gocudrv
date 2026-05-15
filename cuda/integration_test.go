@@ -5,17 +5,31 @@ package cuda
 import (
 	"context"
 	"errors"
+	"os"
+	"sync"
 	"testing"
 )
 
+var (
+	integrationInitOnce sync.Once
+	integrationInitErr  error
+)
+
+// initOrSkip caches the result of Init across the integration test binary
+// so a broken environment (e.g. WSL without GPU passthrough) does not
+// repeatedly load and tear down the driver, which can destabilize the
+// process. Tests sharing a binary share a single Init outcome.
 func initOrSkip(t *testing.T) {
 	t.Helper()
-	if err := Init(); err != nil {
-		if errors.Is(err, ErrOperatingSystem) || errors.Is(err, ErrSystemNotReady) || errors.Is(err, ErrNoDevice) {
-			t.Skipf("CUDA driver is not usable in this environment: %v", err)
-		}
-		t.Fatalf("Init: %v", err)
+	integrationInitOnce.Do(func() { integrationInitErr = Init() })
+	err := integrationInitErr
+	if err == nil {
+		return
 	}
+	if errors.Is(err, ErrOperatingSystem) || errors.Is(err, ErrSystemNotReady) || errors.Is(err, ErrNoDevice) {
+		t.Skipf("CUDA driver is not usable in this environment: %v", err)
+	}
+	t.Fatalf("Init: %v", err)
 }
 
 func TestRealInitAndVersion(t *testing.T) {
@@ -151,6 +165,39 @@ func TestRealPinnedHostRoundTrip(t *testing.T) {
 		}
 	}
 	t.Logf("round-tripped %d float32 (%d bytes) through pinned host and device buffers", n, n*4)
+}
+
+func TestRealModuleLoad(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+
+	ptx, err := os.ReadFile("testdata/vector_add.ptx")
+	if err != nil {
+		t.Fatalf("read ptx: %v", err)
+	}
+
+	mod, err := ctx.LoadModule(ptx)
+	if err != nil {
+		t.Fatalf("LoadModule: %v", err)
+	}
+	t.Cleanup(func() { _ = mod.Close() })
+
+	fn, err := mod.Function("vector_add")
+	if err != nil {
+		t.Fatalf("Function: %v", err)
+	}
+	if fn.Name() != "vector_add" {
+		t.Errorf("Name = %q, want vector_add", fn.Name())
+	}
+	t.Logf("loaded module with vector_add function")
 }
 
 func TestRealDeviceEnum(t *testing.T) {
