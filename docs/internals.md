@@ -59,6 +59,9 @@ type Driver struct {
     CuMemcpyDtoH              func(dst *byte, src CUdeviceptr, byteCount uint64) CUresult
     CuMemAllocHost            func(pp **byte, bytesize uint64) CUresult
     CuMemFreeHost             func(p *byte) CUresult
+    CuModuleLoadData          func(module *CUmodule, image *byte) CUresult
+    CuModuleUnload            func(module CUmodule) CUresult
+    CuModuleGetFunction       func(fn *CUfunction, module CUmodule, name *byte) CUresult
 }
 ```
 
@@ -82,6 +85,9 @@ type Driver struct {
 - `cuMemcpyDtoH_v2`
 - `cuMemAllocHost_v2`
 - `cuMemFreeHost`
+- `cuModuleLoadData`
+- `cuModuleUnload`
+- `cuModuleGetFunction`
 
 If any bind fails, `Load` closes the library before returning. On successful
 initialization, the package-global `cuda` driver keeps the handle alive.
@@ -165,3 +171,33 @@ guarantee because the slice header carries no back-reference to the
 Both `cuMemAllocHost_v2` and `cuMemFreeHost` run on the context executor
 via the same strict `doWait` path used by `cuMemAlloc_v2` / `cuMemFree_v2`:
 cancellation can stop submission but not abandon an in-flight call.
+
+## PTX null-termination
+
+`cuModuleLoadData` accepts two distinct kinds of input pointer: a
+null-terminated **PTX text** image, or a **cubin / fatbin binary** image
+which the driver parses through its own header rather than relying on a
+terminator. PTX text produced by `nvcc -ptx` or hand-authored PTX often
+omits a trailing zero, so the wrapper makes it safe regardless of source.
+
+`Context.LoadModule` inspects the last byte of the caller's slice: if it
+is already `0`, the slice is passed through unchanged; otherwise the
+wrapper allocates a fresh `len(image)+1` buffer, copies the bytes, and
+lets the trailing zero serve as the terminator. This is harmless for
+binary cubin/fatbin images since the driver parses them by header. The
+caller's slice is never mutated. `runtime.KeepAlive` keeps the chosen
+buffer reachable across the executor call so the GC cannot reclaim it
+while the driver is still reading.
+
+`Module.Function` always allocates a `len(name)+1` byte buffer and copies
+the Go string into it so the trailing zero is guaranteed. Names
+containing an embedded `\x00` are rejected up front with
+`ErrInvalidFunctionName`; otherwise CUDA would silently truncate the
+name at the first null and bind the wrong kernel. The same `KeepAlive`
+discipline applies.
+
+`cuModuleLoadData`, `cuModuleUnload`, and `cuModuleGetFunction` all run
+on the context executor via the strict `doWait` path. Module lookups
+hold the `Module`'s read lock so `Close` cannot unload the module while
+a function lookup is in flight; `Close` takes the write lock to drain
+in-flight lookups before issuing `cuModuleUnload`.

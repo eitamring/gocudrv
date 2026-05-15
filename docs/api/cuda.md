@@ -247,6 +247,57 @@ one-off copies the pageable path is fine.
 Lifetime rule mirrors `Buffer`: a `HostBuffer` must be closed before its
 owning `Context` is closed.
 
+## modules
+
+`Module` is a handle to a loaded PTX or cubin image owned by a `Context`.
+Use it to look up kernel functions by name.
+
+```go
+ptx, err := os.ReadFile("vector_add.ptx")
+if err != nil {
+    log.Fatal(err)
+}
+
+mod, err := ctx.LoadModule(ptx)
+if err != nil {
+    log.Fatal(err)
+}
+defer mod.Close()
+
+fn, err := mod.Function("vector_add")
+if err != nil {
+    log.Fatal(err)
+}
+_ = fn // pass to a future launch API
+```
+
+- `(*Context).LoadModule(image []byte) (*Module, error)` calls
+  `cuModuleLoadData` with the image. PTX images must be null-terminated;
+  if the slice is not already, a fresh copy with a trailing null byte is
+  passed to the driver so the caller's slice is not mutated.
+- `(*Context).LoadModuleFromFile(path string) (*Module, error)` reads the
+  file at `path` and forwards the bytes to `LoadModule`. Empty path is
+  rejected with `ErrEmptyImage`; read errors are wrapped with the path.
+- `(*Module).Function(name string) (*Function, error)` looks up a kernel.
+  The name is converted to a null-terminated byte sequence before being
+  passed to `cuModuleGetFunction`.
+- `(*Module).Close() error` unloads the module. Idempotent after a
+  successful unload; failures leave the module open so `Close` can be
+  retried.
+- `(*Function).Name() string` returns the kernel name used to look up the
+  function. Returns `""` for a nil `*Function`.
+
+`LoadModule` and `Module.Close` do not take `context.Context` for the same
+reason as the other ownership-managing entry points: partial completion
+would leak module state.
+
+**Lifetime rule:** a `Module` must be closed before its owning `Context`
+is closed. After the `Context` is closed, `Module.Close` cannot reach the
+executor and returns `ErrContextClosed`. Pair every `LoadModule` with
+`defer mod.Close()` and close every module before the context. A
+`Function` is tied to its `Module`: once `Module.Close` succeeds the
+handle is invalid.
+
 ## errors
 
 `cuda.Error` is an alias for `cudaresult.Error`. It carries the raw CUDA result
@@ -282,6 +333,11 @@ Go-side sentinels:
 - `ErrBufferClosed`: a method was called on a `*Buffer[T]` or `*HostBuffer[T]` after `Close`.
 - `ErrLengthMismatch`: a copy was given mismatched or empty slices/buffers.
 - `ErrInvalidLength`: `Alloc` or `AllocHost` was given a non-positive or overflowing element count.
+- `ErrNilModule`: a method was called on a nil `*Module`.
+- `ErrModuleClosed`: a method was called on a `*Module` after `Close`.
+- `ErrEmptyImage`: `LoadModule` was given a nil or empty image, or `LoadModuleFromFile` was given an empty path.
+- `ErrEmptyFunctionName`: `Module.Function` was given an empty name.
+- `ErrInvalidFunctionName`: `Module.Function` was given a name containing a null byte (CUDA would silently truncate it).
 
 Returned CUDA errors for codes outside the table still match with:
 
