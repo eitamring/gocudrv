@@ -9,7 +9,7 @@ it.
 - NVIDIA GPU with a working driver
 - Linux, WSL2, or Windows
 - Go 1.22+
-- Precompiled PTX later, when kernel launch support lands
+- Precompiled PTX if you want to launch kernels
 
 ## WSL2
 

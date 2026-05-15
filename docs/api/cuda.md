@@ -268,7 +268,6 @@ fn, err := mod.Function("vector_add")
 if err != nil {
     log.Fatal(err)
 }
-_ = fn // pass to a future launch API
 ```
 
 - `(*Context).LoadModule(image []byte) (*Module, error)` calls
@@ -297,6 +296,40 @@ executor and returns `ErrContextClosed`. Pair every `LoadModule` with
 `defer mod.Close()` and close every module before the context. A
 `Function` is tied to its `Module`: once `Module.Close` succeeds the
 handle is invalid.
+
+## kernel launch
+
+`Function.Launch` enqueues a kernel on the context's default stream. The first
+release supports device-buffer pointers and fixed-size scalar values:
+
+```go
+cfg := cuda.LaunchConfig1D(n, 256)
+if err := fn.Launch(context.Background(), cfg,
+    cuda.Arg(a),
+    cuda.Arg(b),
+    cuda.Arg(out),
+    cuda.ArgValue(int32(n)),
+); err != nil {
+    log.Fatal(err)
+}
+if err := ctx.Synchronize(context.Background()); err != nil {
+    log.Fatal(err)
+}
+```
+
+- `LaunchConfig` carries grid, block, and dynamic shared-memory dimensions.
+- `LaunchConfig1D(n, blockSize)` builds a one-dimensional config covering
+  `n` elements, rounding the grid up.
+- `Arg(buffer)` passes a device-buffer pointer.
+- `ArgValue(value)` passes a fixed-size scalar value.
+- `(*Function).Launch(ctx, cfg, args...)` submits the launch on the default
+  stream. Invalid zero dimensions return `ErrInvalidLaunchConfig`.
+
+Cancellation can stop submission, but once submitted `Launch` waits until
+`cuLaunchKernel` returns so temporary Go argument storage remains valid.
+`Launch` is asynchronous with respect to GPU execution: after it returns, the
+kernel may still be running. Call `Context.Synchronize` before reading outputs
+or closing buffers/modules used by the launch.
 
 ## errors
 
@@ -338,6 +371,10 @@ Go-side sentinels:
 - `ErrEmptyImage`: `LoadModule` was given a nil or empty image, or `LoadModuleFromFile` was given an empty path.
 - `ErrEmptyFunctionName`: `Module.Function` was given an empty name.
 - `ErrInvalidFunctionName`: `Module.Function` was given a name containing a null byte (CUDA would silently truncate it).
+- `ErrNilFunction`: a method was called on a nil `*Function`.
+- `ErrInvalidLaunchConfig`: `Function.Launch` was given zero grid or block dimensions.
+- `ErrNilKernelArg`: `Function.Launch` was given a nil `KernelArg`.
+- `ErrContextMismatch`: a kernel argument belongs to a different context from the function.
 
 Returned CUDA errors for codes outside the table still match with:
 

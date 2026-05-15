@@ -2,6 +2,7 @@ package cudasys
 
 import (
 	"fmt"
+	"unsafe"
 
 	"github.com/ebitengine/purego"
 
@@ -34,6 +35,7 @@ type Driver struct {
 	CuModuleLoadData          func(module *CUmodule, image *byte) CUresult
 	CuModuleUnload            func(module CUmodule) CUresult
 	CuModuleGetFunction       func(fn *CUfunction, module CUmodule, name *byte) CUresult
+	CuLaunchKernel            func(fn CUfunction, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemBytes uint32, stream CUstream, kernelParams *unsafe.Pointer, extra *unsafe.Pointer) CUresult
 }
 
 // bindFn is the symbol-binding function used by Load. Overridable in tests.
@@ -69,6 +71,7 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuModuleLoadData, "cuModuleLoadData"},
 		{&d.CuModuleUnload, "cuModuleUnload"},
 		{&d.CuModuleGetFunction, "cuModuleGetFunction"},
+		{&d.CuLaunchKernel, "cuLaunchKernel"},
 	}
 	for _, b := range binds {
 		if err := bindFn(lib, b.fn, b.name); err != nil {

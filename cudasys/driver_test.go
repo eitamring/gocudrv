@@ -44,6 +44,7 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		{"cuModuleLoadData fails", "cuModuleLoadData"},
 		{"cuModuleUnload fails", "cuModuleUnload"},
 		{"cuModuleGetFunction fails", "cuModuleGetFunction"},
+		{"cuLaunchKernel fails", "cuLaunchKernel"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
