@@ -26,3 +26,19 @@ func TestBuilderAddAndParams(t *testing.T) {
 	}
 	b.KeepAlive()
 }
+
+func TestBuilderSpillsAfterInlineCapacity(t *testing.T) {
+	var b Builder
+	for i := 0; i < inlineArgs+1; i++ {
+		Add(&b, uint32(i))
+	}
+	if got := b.Len(); got != inlineArgs+1 {
+		t.Fatalf("Len = %d, want %d", got, inlineArgs+1)
+	}
+	params := unsafe.Slice(b.Params(), b.Len())
+	for i := range params {
+		if got := *(*uint32)(params[i]); got != uint32(i) {
+			t.Errorf("arg%d = %d, want %d", i, got, i)
+		}
+	}
+}

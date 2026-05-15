@@ -16,7 +16,7 @@ type launchFake struct {
 	params      []unsafe.Pointer
 }
 
-func (l *launchFake) driver(t *testing.T) *cudasys.Driver {
+func (l *launchFake) driver(t testing.TB) *cudasys.Driver {
 	t.Helper()
 	return &cudasys.Driver{
 		CuDeviceGetCount: func(n *int32) cudasys.CUresult { *n = 1; return cudasys.CUDA_SUCCESS },
@@ -75,6 +75,38 @@ func (l *launchFake) driver(t *testing.T) *cudasys.Driver {
 			l.params = append([]unsafe.Pointer(nil), unsafe.Slice(params, 5)...)
 			return cudasys.CUDA_SUCCESS
 		},
+	}
+}
+
+func BenchmarkFunctionLaunch(b *testing.B) {
+	var l launchFake
+	resetDriver()
+	mu.Lock()
+	driver = l.driver(b)
+	mu.Unlock()
+	b.Cleanup(resetDriver)
+	dev, _ := GetDevice(0)
+	ctx, _ := dev.Primary()
+	b.Cleanup(func() { _ = ctx.Close() })
+	mod, _ := ctx.LoadModule([]byte{'P', 0})
+	b.Cleanup(func() { _ = mod.Close() })
+	fn, _ := mod.Function("k")
+	buf, _ := Alloc[float32](ctx, 4)
+	b.Cleanup(func() { _ = buf.Close() })
+	cfg := LaunchConfig1D(1024, 256)
+	cfg.SharedMemBytes = 32
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := fn.Launch(context.Background(), cfg,
+			Arg(buf),
+			ArgValue(int32(i)),
+			ArgValue(uint32(i)),
+			ArgValue(float32(i)),
+		); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

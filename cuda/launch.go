@@ -3,6 +3,7 @@ package cuda
 import (
 	"context"
 	"math"
+	"sync"
 
 	"github.com/eitamring/gocudrv/cudaresult"
 	"github.com/eitamring/gocudrv/cudasys"
@@ -52,18 +53,37 @@ type KernelArg interface {
 }
 
 type kernelArgBuilder struct {
-	ctx      *Context
-	packed   argpack.Builder
-	releases []func()
+	ctx           *Context
+	packed        argpack.Builder
+	inlineLocks   [16]*sync.RWMutex
+	lockCount     int
+	overflowLocks []*sync.RWMutex
 }
 
 func (b *kernelArgBuilder) addDevicePtr(ptr cudasys.CUdeviceptr) {
 	argpack.Add(&b.packed, ptr)
 }
 
+func (b *kernelArgBuilder) addLock(mu *sync.RWMutex) {
+	if b.lockCount < len(b.inlineLocks) {
+		b.inlineLocks[b.lockCount] = mu
+		b.lockCount++
+		return
+	}
+	b.overflowLocks = append(b.overflowLocks, mu)
+	b.lockCount++
+}
+
 func (b *kernelArgBuilder) release() {
-	for i := len(b.releases) - 1; i >= 0; i-- {
-		b.releases[i]()
+	for i := len(b.overflowLocks) - 1; i >= 0; i-- {
+		b.overflowLocks[i].RUnlock()
+	}
+	limit := b.lockCount
+	if limit > len(b.inlineLocks) {
+		limit = len(b.inlineLocks)
+	}
+	for i := limit - 1; i >= 0; i-- {
+		b.inlineLocks[i].RUnlock()
 	}
 }
 
@@ -89,7 +109,7 @@ func (a bufferKernelArg[T]) appendKernelArg(b *kernelArgBuilder) error {
 		a.buffer.opMu.RUnlock()
 		return ErrContextMismatch
 	}
-	b.releases = append(b.releases, a.buffer.opMu.RUnlock)
+	b.addLock(&a.buffer.opMu)
 	b.addDevicePtr(a.buffer.ptr)
 	return nil
 }
@@ -148,10 +168,12 @@ func (f *Function) Launch(ctx context.Context, cfg LaunchConfig, args ...KernelA
 			cfg.GridX, cfg.GridY, cfg.GridZ,
 			cfg.BlockX, cfg.BlockY, cfg.BlockZ,
 			cfg.SharedMemBytes,
-			0,
+			defaultStream,
 			builder.packed.Params(),
 		)
 	})
 	builder.packed.KeepAlive()
 	return err
 }
+
+const defaultStream cudasys.CUstream = 0

@@ -207,10 +207,11 @@ in-flight lookups before issuing `cuModuleUnload`.
 ## kernel argument packing
 
 `cuLaunchKernel` receives `void** kernelParams`: each element points to the
-storage holding one argument value. `internal/argpack.Builder` allocates one
-stable temporary value per kernel argument and builds the pointer slice passed
-to the driver. `Function.Launch` keeps that storage alive until
-`cuLaunchKernel` returns.
+storage holding one argument value. `internal/argpack.Builder` keeps the common
+path inline: up to 16 arguments of eight bytes or less are stored inside the
+builder itself, with heap-backed spillover only for unusually large or numerous
+arguments. `Function.Launch` keeps that storage alive until `cuLaunchKernel`
+returns.
 
 `cuda.Arg(buffer)` stores the device pointer value, not the Go `Buffer`
 pointer. It takes the buffer read lock while the driver call is in flight so
