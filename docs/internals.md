@@ -62,6 +62,7 @@ type Driver struct {
     CuModuleLoadData          func(module *CUmodule, image *byte) CUresult
     CuModuleUnload            func(module CUmodule) CUresult
     CuModuleGetFunction       func(fn *CUfunction, module CUmodule, name *byte) CUresult
+    CuLaunchKernel            func(fn CUfunction, ..., kernelParams *unsafe.Pointer, extra *unsafe.Pointer) CUresult
 }
 ```
 
@@ -88,6 +89,7 @@ type Driver struct {
 - `cuModuleLoadData`
 - `cuModuleUnload`
 - `cuModuleGetFunction`
+- `cuLaunchKernel`
 
 If any bind fails, `Load` closes the library before returning. On successful
 initialization, the package-global `cuda` driver keeps the handle alive.
@@ -201,3 +203,23 @@ on the context executor via the strict `doWait` path. Module lookups
 hold the `Module`'s read lock so `Close` cannot unload the module while
 a function lookup is in flight; `Close` takes the write lock to drain
 in-flight lookups before issuing `cuModuleUnload`.
+
+## kernel argument packing
+
+`cuLaunchKernel` receives `void** kernelParams`: each element points to the
+storage holding one argument value. `internal/argpack.Builder` keeps the common
+path inline: up to 16 arguments of eight bytes or less are stored inside the
+builder itself, with heap-backed spillover only for unusually large or numerous
+arguments. `Function.Launch` keeps that storage alive until `cuLaunchKernel`
+returns.
+
+`cuda.Arg(buffer)` stores the device pointer value, not the Go `Buffer`
+pointer. It takes the buffer read lock while the driver call is in flight so
+`Buffer.Close` cannot race with argument extraction. `cuda.ArgValue(value)`
+stores fixed-size scalar values directly. Cross-context buffer arguments are
+rejected before submission.
+
+Launch currently uses the default CUDA stream. Returning from `cuLaunchKernel`
+only means the launch was submitted; GPU execution may continue afterward.
+Callers must keep buffers and modules open until synchronization confirms the
+kernel is done.
