@@ -1,8 +1,7 @@
 # getting started
 
-`gocudrv` loads the NVIDIA CUDA driver at runtime. You do not need CUDA
-headers, the CUDA toolkit, cgo, or a C compiler to build packages that import
-it.
+`gocudrv` loads the CUDA driver at runtime. Building it does not require the
+CUDA toolkit, CUDA headers, cgo, or a C compiler.
 
 ## requirements
 
@@ -14,13 +13,13 @@ it.
 ## WSL2
 
 Install the NVIDIA driver on Windows. Do not install a Linux NVIDIA kernel
-driver inside WSL. The Windows driver exposes CUDA to WSL through:
+driver inside WSL. CUDA should be exposed through:
 
 ```text
 /usr/lib/wsl/lib/libcuda.so.1
 ```
 
-Basic sanity checks:
+Sanity check:
 
 ```bash
 nvidia-smi
@@ -42,14 +41,18 @@ Hardware-backed integration tests are opt-in:
 go test -tags cuda_integration ./cuda
 ```
 
-## device-info example
+## examples
 
-Run the current example to list visible CUDA devices:
+List visible devices:
 
 ```bash
 go run ./examples/device-info
 ```
 
-The command prints the driver version and per-device properties such as name,
-total memory, compute capability, SM count, warp size, clock rate, and memory
-bus width.
+Run the vector-add example:
+
+```bash
+go run ./examples/vector-add
+```
+
+For the `.cu` to `.ptx` workflow, see [writing and shipping kernels](kernels.md).
