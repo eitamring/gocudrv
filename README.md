@@ -94,7 +94,9 @@ scripts/       build and check helpers
 4. device memory and host/device copies
 5. PTX module loading
 6. kernel launch with arg packing
-7. events and basic benchmarking
+7. streams
+8. async host/device copies
+9. events and basic benchmarking
 
 ## License
 
