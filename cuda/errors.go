@@ -20,6 +20,10 @@ var (
 	ErrEmptyImage          = errors.New("cuda: empty module image")
 	ErrEmptyFunctionName   = errors.New("cuda: empty function name")
 	ErrInvalidFunctionName = errors.New("cuda: function name contains null byte")
+	ErrNilFunction         = errors.New("cuda: nil function")
+	ErrInvalidLaunchConfig = errors.New("cuda: invalid launch config")
+	ErrNilKernelArg        = errors.New("cuda: nil kernel argument")
+	ErrContextMismatch     = errors.New("cuda: resource belongs to a different context")
 )
 
 // Error is the typed error returned for non-success CUDA result codes.
