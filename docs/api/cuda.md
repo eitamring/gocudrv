@@ -327,9 +327,10 @@ if err := ctx.Synchronize(context.Background()); err != nil {
 
 Cancellation can stop submission, but once submitted `Launch` waits until
 `cuLaunchKernel` returns so temporary Go argument storage remains valid.
-`Launch` is asynchronous with respect to GPU execution: after it returns, the
-kernel may still be running. Call `Context.Synchronize` before reading outputs
-or closing buffers/modules used by the launch.
+
+**Lifetime rule:** `Launch` is asynchronous with respect to GPU execution.
+After it returns, the kernel may still be running. Call `Context.Synchronize`
+before reading outputs or closing any buffer or module the kernel touched.
 
 ## errors
 

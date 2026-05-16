@@ -75,15 +75,12 @@ func (b *kernelArgBuilder) addLock(mu *sync.RWMutex) {
 }
 
 func (b *kernelArgBuilder) release() {
-	for i := len(b.overflowLocks) - 1; i >= 0; i-- {
-		b.overflowLocks[i].RUnlock()
-	}
-	limit := b.lockCount
-	if limit > len(b.inlineLocks) {
-		limit = len(b.inlineLocks)
-	}
-	for i := limit - 1; i >= 0; i-- {
-		b.inlineLocks[i].RUnlock()
+	for i := b.lockCount - 1; i >= 0; i-- {
+		if i < len(b.inlineLocks) {
+			b.inlineLocks[i].RUnlock()
+			continue
+		}
+		b.overflowLocks[i-len(b.inlineLocks)].RUnlock()
 	}
 }
 
