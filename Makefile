@@ -1,4 +1,4 @@
-.PHONY: all test vet race lint nocgo help
+.PHONY: all test vet race lint nocgo ptx help
 
 all: vet test lint
 
@@ -17,6 +17,9 @@ lint:
 nocgo:
 	bash scripts/check-no-cgo.sh
 
+ptx:
+	bash examples/vector-add/build-ptx.sh
+
 help:
 	@echo "targets:"
 	@echo "  test   - run tests with race and coverage"
@@ -24,4 +27,5 @@ help:
 	@echo "  race   - run tests with race detector"
 	@echo "  lint   - run golangci-lint"
 	@echo "  nocgo  - build and test with CGO_ENABLED=0"
+	@echo "  ptx    - regenerate examples/vector-add/vector_add.ptx (requires nvcc)"
 	@echo "  all    - vet, test, lint"

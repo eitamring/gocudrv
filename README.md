@@ -57,9 +57,20 @@ CGO_ENABLED=0 go build ./...
 CGO_ENABLED=0 go test ./...
 ```
 
+## Try it
+
+```bash
+go run ./examples/vector-add
+```
+
+Adds two `float32` vectors on the GPU using an embedded PTX module and
+verifies the result on the CPU. See `docs/kernels.md` for the full
+workflow from `.cu` source to a running Go program.
+
 ## Docs
 
 - [Getting started](docs/getting-started.md)
+- [Writing and shipping kernels](docs/kernels.md)
 - [Public API](docs/api/cuda.md)
 - [Internals](docs/internals.md)
 - [Docs index](docs/README.md)

@@ -53,3 +53,16 @@ go run ./examples/device-info
 The command prints the driver version and per-device properties such as name,
 total memory, compute capability, SM count, warp size, clock rate, and memory
 bus width.
+
+## vector-add example
+
+End-to-end kernel launch using an embedded PTX module:
+
+```bash
+go run ./examples/vector-add
+```
+
+The example allocates two input buffers, copies host data to the GPU, launches
+a kernel from PTX embedded with `//go:embed`, synchronizes, copies the result
+back, and verifies it. See `docs/kernels.md` for the full workflow from `.cu`
+source to a running Go program.
