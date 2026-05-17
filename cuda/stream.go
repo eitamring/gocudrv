@@ -22,17 +22,21 @@ type streamOptions struct {
 	err      error
 }
 
-type streamOption func(*streamOptions)
+type streamOptionFunc func(*streamOptions)
 
-func (f streamOption) apply(opts *streamOptions) {
+func (f streamOptionFunc) apply(opts *streamOptions) {
 	f(opts)
 }
 
 // WithStreamPriority requests a CUDA scheduling priority for the new stream.
-// Lower numeric values represent higher priority. CUDA clamps priorities that
-// are outside the device's supported range.
+// Lower numeric values represent higher priority, and 0 is the default. CUDA
+// clamps priorities that are outside the device's supported range; use
+// Context.StreamPriorityRange to discover the meaningful interval.
 func WithStreamPriority(priority int) StreamOption {
-	return streamOption(func(opts *streamOptions) {
+	return streamOptionFunc(func(opts *streamOptions) {
+		if opts.err != nil {
+			return
+		}
 		if priority < math.MinInt32 || priority > math.MaxInt32 {
 			opts.err = ErrInvalidStreamPriority
 			return
@@ -65,9 +69,9 @@ func (c *Context) NewStream(options ...StreamOption) (*Stream, error) {
 			continue
 		}
 		option.apply(&opts)
-	}
-	if opts.err != nil {
-		return nil, opts.err
+		if opts.err != nil {
+			return nil, opts.err
+		}
 	}
 	var raw cudasys.CUstream
 	err := c.doWait(context.Background(), func() error {

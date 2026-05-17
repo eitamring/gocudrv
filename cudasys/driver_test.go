@@ -33,6 +33,7 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		{"cuCtxGetCurrent fails", "cuCtxGetCurrent"},
 		{"cuCtxSetCurrent fails", "cuCtxSetCurrent"},
 		{"cuCtxSynchronize fails", "cuCtxSynchronize"},
+		{"cuCtxGetStreamPriorityRange fails", "cuCtxGetStreamPriorityRange"},
 		{"cuDevicePrimaryCtxRetain fails", "cuDevicePrimaryCtxRetain"},
 		{"cuDevicePrimaryCtxRelease_v2 fails", "cuDevicePrimaryCtxRelease_v2"},
 		{"cuMemAlloc_v2 fails", "cuMemAlloc_v2"},

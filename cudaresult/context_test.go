@@ -173,3 +173,53 @@ func TestCtxSynchronize(t *testing.T) {
 		t.Errorf("err = %v, want ErrInvalidContext", err)
 	}
 }
+
+func TestCtxGetStreamPriorityRange(t *testing.T) {
+	cases := []struct {
+		name         string
+		driver       *cudasys.Driver
+		wantLeast    int32
+		wantGreatest int32
+		wantErr      error
+	}{
+		{"nil driver", nil, 0, 0, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, 0, 0, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuCtxGetStreamPriorityRange: func(least, greatest *int32) cudasys.CUresult {
+				*least = 0
+				*greatest = -2
+				return cudasys.CUDA_SUCCESS
+			}},
+			0,
+			-2,
+			nil,
+		},
+		{
+			"invalid context",
+			&cudasys.Driver{CuCtxGetStreamPriorityRange: func(*int32, *int32) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_CONTEXT
+			}},
+			0,
+			0,
+			ErrInvalidContext,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			least, greatest, err := CtxGetStreamPriorityRange(tc.driver)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Errorf("err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if least != tc.wantLeast || greatest != tc.wantGreatest {
+				t.Errorf("range = (%d, %d), want (%d, %d)", least, greatest, tc.wantLeast, tc.wantGreatest)
+			}
+		})
+	}
+}

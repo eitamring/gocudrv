@@ -58,6 +58,13 @@ func TestRealPrimaryContext(t *testing.T) {
 		if err := ctx.Synchronize(context.Background()); err != nil {
 			t.Errorf("Synchronize cycle %d: %v", cycle, err)
 		}
+		least, greatest, err := ctx.StreamPriorityRange()
+		if err != nil {
+			t.Errorf("StreamPriorityRange cycle %d: %v", cycle, err)
+		}
+		if greatest > least {
+			t.Errorf("StreamPriorityRange cycle %d = (%d, %d), want greatest <= least", cycle, least, greatest)
+		}
 		if err := ctx.Close(); err != nil {
 			t.Errorf("Close cycle %d: %v", cycle, err)
 		}

@@ -51,6 +51,7 @@ type Driver struct {
     CuCtxGetCurrent           func(ctx *CUcontext) CUresult
     CuCtxSetCurrent           func(ctx CUcontext) CUresult
     CuCtxSynchronize          func() CUresult
+    CuCtxGetStreamPriorityRange func(leastPriority *int32, greatestPriority *int32) CUresult
     CuDevicePrimaryCtxRetain  func(ctx *CUcontext, dev CUdevice) CUresult
     CuDevicePrimaryCtxRelease func(dev CUdevice) CUresult
     CuMemAlloc                func(devPtr *CUdeviceptr, bytesize uint64) CUresult
@@ -82,6 +83,7 @@ type Driver struct {
 - `cuCtxGetCurrent`
 - `cuCtxSetCurrent`
 - `cuCtxSynchronize`
+- `cuCtxGetStreamPriorityRange`
 - `cuDevicePrimaryCtxRetain`
 - `cuDevicePrimaryCtxRelease_v2`
 - `cuMemAlloc_v2`

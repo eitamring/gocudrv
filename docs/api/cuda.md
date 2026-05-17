@@ -92,6 +92,10 @@ if err := ctx.Synchronize(context.Background()); err != nil {
   starts the executor. Rolls back retain and stops the executor on failure.
 - `(*Context).Device() *Device` returns the device this context was created
   on.
+- `(*Context).StreamPriorityRange() (least, greatest int, err error)` returns
+  the meaningful CUDA stream-priority interval. Lower numbers mean higher
+  priority, so the interval is `[greatest, least]`. Devices without priority
+  support return `(0, 0)`.
 - `(*Context).Synchronize(ctx context.Context) error` blocks until all
   preceding GPU work finishes or `ctx` is canceled. Canceling stops the
   wait; the GPU work continues regardless.
@@ -270,8 +274,9 @@ if err := stream.Synchronize(context.Background()); err != nil {
 - `(*Context).NewStream(opts ...StreamOption) (*Stream, error)` creates a
   non-blocking stream.
 - `WithStreamPriority(priority int)` requests a CUDA stream priority. Lower
-  numbers mean higher priority; CUDA clamps values outside the device's
-  supported priority range.
+  numbers mean higher priority, and `0` is the default. Use
+  `Context.StreamPriorityRange` to discover the meaningful interval for the
+  current device; CUDA clamps values outside that range.
 - `(*Stream).Synchronize(ctx context.Context) error` waits until preceding
   work in that stream finishes. Canceling `ctx` stops the wait; queued GPU work
   continues.

@@ -79,6 +79,9 @@ func TestNewStreamHappy(t *testing.T) {
 	if calls.create.Load() != 1 {
 		t.Errorf("create calls = %d, want 1", calls.create.Load())
 	}
+	if calls.createPriority.Load() != 0 {
+		t.Errorf("priority create calls = %d, want 0", calls.createPriority.Load())
+	}
 	if calls.lastFlags.Load() != streamNonBlocking {
 		t.Errorf("flags = %d, want %d", calls.lastFlags.Load(), streamNonBlocking)
 	}
@@ -122,9 +125,39 @@ func TestNewStreamRejects(t *testing.T) {
 	}
 	if strconv.IntSize > 32 {
 		priorityCtx := newTestContext(t, fakeStreamDriver(&calls, nil))
-		if _, err := priorityCtx.NewStream(WithStreamPriority(int(math.MaxInt32) + 1)); !errors.Is(err, ErrInvalidStreamPriority) {
-			t.Errorf("invalid priority err = %v, want ErrInvalidStreamPriority", err)
+		cases := []struct {
+			name  string
+			value int
+		}{
+			{"too high", int(math.MaxInt32) + 1},
+			{"too low", int(math.MinInt32) - 1},
 		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if _, err := priorityCtx.NewStream(WithStreamPriority(tc.value)); !errors.Is(err, ErrInvalidStreamPriority) {
+					t.Errorf("invalid priority err = %v, want ErrInvalidStreamPriority", err)
+				}
+			})
+		}
+	}
+}
+
+func TestNewStreamStopsApplyingOptionsAfterError(t *testing.T) {
+	var calls streamCalls
+	ctx := newTestContext(t, fakeStreamDriver(&calls, nil))
+	ran := false
+	_, err := ctx.NewStream(
+		streamOptionFunc(func(opts *streamOptions) { opts.err = ErrInvalidStreamPriority }),
+		streamOptionFunc(func(*streamOptions) { ran = true }),
+	)
+	if !errors.Is(err, ErrInvalidStreamPriority) {
+		t.Fatalf("err = %v, want ErrInvalidStreamPriority", err)
+	}
+	if ran {
+		t.Error("later option ran after an earlier option failed")
+	}
+	if calls.create.Load() != 0 || calls.createPriority.Load() != 0 {
+		t.Errorf("stream creation ran after option failure: create=%d priority=%d", calls.create.Load(), calls.createPriority.Load())
 	}
 }
 

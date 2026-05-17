@@ -54,3 +54,16 @@ func CtxSynchronize(d *cudasys.Driver) error {
 	}
 	return check("cuCtxSynchronize", d.CuCtxSynchronize())
 }
+
+// CtxGetStreamPriorityRange returns the least and greatest meaningful stream
+// priorities for the current context. Lower numeric values represent greater
+// priority.
+func CtxGetStreamPriorityRange(d *cudasys.Driver) (least, greatest int32, err error) {
+	if d == nil || d.CuCtxGetStreamPriorityRange == nil {
+		return 0, 0, ErrNotInitialized
+	}
+	if err := check("cuCtxGetStreamPriorityRange", d.CuCtxGetStreamPriorityRange(&least, &greatest)); err != nil {
+		return 0, 0, err
+	}
+	return least, greatest, nil
+}
