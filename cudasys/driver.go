@@ -13,29 +13,33 @@ import (
 // shared-library handle. Fields are public so tests can construct a fake
 // Driver without touching purego.
 type Driver struct {
-	lib                       dynload.Library
-	CuInit                    func(flags uint32) CUresult
-	CuDriverGetVersion        func(version *int32) CUresult
-	CuDeviceGetCount          func(count *int32) CUresult
-	CuDeviceGet               func(device *CUdevice, ordinal int32) CUresult
-	CuDeviceGetName           func(name *byte, length int32, dev CUdevice) CUresult
-	CuDeviceTotalMem          func(bytes *uint64, dev CUdevice) CUresult
-	CuDeviceGetAttribute      func(value *int32, attr int32, dev CUdevice) CUresult
-	CuCtxGetCurrent           func(ctx *CUcontext) CUresult
-	CuCtxSetCurrent           func(ctx CUcontext) CUresult
-	CuCtxSynchronize          func() CUresult
-	CuDevicePrimaryCtxRetain  func(ctx *CUcontext, dev CUdevice) CUresult
-	CuDevicePrimaryCtxRelease func(dev CUdevice) CUresult
-	CuMemAlloc                func(devPtr *CUdeviceptr, bytesize uint64) CUresult
-	CuMemFree                 func(devPtr CUdeviceptr) CUresult
-	CuMemcpyHtoD              func(dst CUdeviceptr, src *byte, byteCount uint64) CUresult
-	CuMemcpyDtoH              func(dst *byte, src CUdeviceptr, byteCount uint64) CUresult
-	CuMemAllocHost            func(pp **byte, bytesize uint64) CUresult
-	CuMemFreeHost             func(p *byte) CUresult
-	CuModuleLoadData          func(module *CUmodule, image *byte) CUresult
-	CuModuleUnload            func(module CUmodule) CUresult
-	CuModuleGetFunction       func(fn *CUfunction, module CUmodule, name *byte) CUresult
-	CuLaunchKernel            func(fn CUfunction, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemBytes uint32, stream CUstream, kernelParams *unsafe.Pointer, extra *unsafe.Pointer) CUresult
+	lib                        dynload.Library
+	CuInit                     func(flags uint32) CUresult
+	CuDriverGetVersion         func(version *int32) CUresult
+	CuDeviceGetCount           func(count *int32) CUresult
+	CuDeviceGet                func(device *CUdevice, ordinal int32) CUresult
+	CuDeviceGetName            func(name *byte, length int32, dev CUdevice) CUresult
+	CuDeviceTotalMem           func(bytes *uint64, dev CUdevice) CUresult
+	CuDeviceGetAttribute       func(value *int32, attr int32, dev CUdevice) CUresult
+	CuCtxGetCurrent            func(ctx *CUcontext) CUresult
+	CuCtxSetCurrent            func(ctx CUcontext) CUresult
+	CuCtxSynchronize           func() CUresult
+	CuDevicePrimaryCtxRetain   func(ctx *CUcontext, dev CUdevice) CUresult
+	CuDevicePrimaryCtxRelease  func(dev CUdevice) CUresult
+	CuMemAlloc                 func(devPtr *CUdeviceptr, bytesize uint64) CUresult
+	CuMemFree                  func(devPtr CUdeviceptr) CUresult
+	CuMemcpyHtoD               func(dst CUdeviceptr, src *byte, byteCount uint64) CUresult
+	CuMemcpyDtoH               func(dst *byte, src CUdeviceptr, byteCount uint64) CUresult
+	CuMemAllocHost             func(pp **byte, bytesize uint64) CUresult
+	CuMemFreeHost              func(p *byte) CUresult
+	CuModuleLoadData           func(module *CUmodule, image *byte) CUresult
+	CuModuleUnload             func(module CUmodule) CUresult
+	CuModuleGetFunction        func(fn *CUfunction, module CUmodule, name *byte) CUresult
+	CuStreamCreate             func(stream *CUstream, flags uint32) CUresult
+	CuStreamCreateWithPriority func(stream *CUstream, flags uint32, priority int32) CUresult
+	CuStreamDestroy            func(stream CUstream) CUresult
+	CuStreamSynchronize        func(stream CUstream) CUresult
+	CuLaunchKernel             func(fn CUfunction, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemBytes uint32, stream CUstream, kernelParams *unsafe.Pointer, extra *unsafe.Pointer) CUresult
 }
 
 // bindFn is the symbol-binding function used by Load. Overridable in tests.
@@ -71,6 +75,10 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuModuleLoadData, "cuModuleLoadData"},
 		{&d.CuModuleUnload, "cuModuleUnload"},
 		{&d.CuModuleGetFunction, "cuModuleGetFunction"},
+		{&d.CuStreamCreate, "cuStreamCreate"},
+		{&d.CuStreamCreateWithPriority, "cuStreamCreateWithPriority"},
+		{&d.CuStreamDestroy, "cuStreamDestroy_v2"},
+		{&d.CuStreamSynchronize, "cuStreamSynchronize"},
 		{&d.CuLaunchKernel, "cuLaunchKernel"},
 	}
 	for _, b := range binds {

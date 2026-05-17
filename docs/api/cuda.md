@@ -104,8 +104,8 @@ Nil `*Context` methods return `ErrNilContext` when they return an error, and
 
 `Primary` and `Close` do not take a `context.Context`: they mutate
 ownership state and partial completion would leak retain counts. Methods
-that only wait (`Synchronize`, and future memory and stream operations)
-take `context.Context`.
+that only wait (`Synchronize` and stream synchronization) take
+`context.Context`.
 
 ## memory
 
@@ -247,6 +247,51 @@ one-off copies the pageable path is fine.
 Lifetime rule mirrors `Buffer`: a `HostBuffer` must be closed before its
 owning `Context` is closed.
 
+## streams
+
+`Stream` is an ordered queue of GPU work owned by a `Context`. New streams are
+created as non-blocking streams, so work submitted to them does not implicitly
+synchronize with the legacy default stream. Explicit streams give the API a
+place to route independent work; the visible overlap benefit arrives with the
+async-copy methods planned next.
+
+```go
+stream, err := ctx.NewStream()
+if err != nil {
+    log.Fatal(err)
+}
+defer stream.Close()
+
+if err := stream.Synchronize(context.Background()); err != nil {
+    log.Fatal(err)
+}
+```
+
+- `(*Context).NewStream(opts ...StreamOption) (*Stream, error)` creates a
+  non-blocking stream.
+- `WithStreamPriority(priority int)` requests a CUDA stream priority. Lower
+  numbers mean higher priority; CUDA clamps values outside the device's
+  supported priority range.
+- `(*Stream).Synchronize(ctx context.Context) error` waits until preceding
+  work in that stream finishes. Canceling `ctx` stops the wait; queued GPU work
+  continues.
+- `(*Stream).Close() error` destroys the stream. Idempotent after a successful
+  destroy; failed destroys leave the stream open so `Close` can be retried.
+
+Nil stream methods return `ErrNilStream`. Methods called after successful close
+return `ErrStreamClosed`.
+
+**Lifetime rule:** close streams before their owning `Context`. Destroying a
+stream does not wait for already queued GPU work to finish. If you call
+`Stream.Close` and then close a buffer or module that queued work still uses,
+the GPU may keep touching a resource you just freed. Call `Stream.Synchronize`
+before reading outputs or closing anything touched by work submitted to that
+stream.
+
+Canceling `Stream.Synchronize` only stops the caller's wait. It does not stop
+the queued GPU work or the underlying CUDA synchronization already running on
+the executor thread; a later `Stream.Close` will still wait behind that work.
+
 ## modules
 
 `Module` is a handle to a loaded PTX or cubin image owned by a `Context`.
@@ -299,8 +344,9 @@ handle is invalid.
 
 ## kernel launch
 
-`Function.Launch` enqueues a kernel on the context's default stream. The first
-release supports device-buffer pointers and fixed-size scalar values:
+`Function.Launch` enqueues a kernel on the context's legacy default stream.
+`Function.LaunchOn` enqueues on an explicit stream. The first release supports
+device-buffer pointers and fixed-size scalar values:
 
 ```go
 cfg := cuda.LaunchConfig1D(n, 256)
@@ -317,20 +363,44 @@ if err := ctx.Synchronize(context.Background()); err != nil {
 }
 ```
 
+```go
+stream, err := ctx.NewStream()
+if err != nil {
+    log.Fatal(err)
+}
+defer stream.Close()
+
+if err := fn.LaunchOn(context.Background(), stream, cfg,
+    cuda.Arg(a),
+    cuda.Arg(b),
+    cuda.Arg(out),
+    cuda.ArgValue(int32(n)),
+); err != nil {
+    log.Fatal(err)
+}
+if err := stream.Synchronize(context.Background()); err != nil {
+    log.Fatal(err)
+}
+```
+
 - `LaunchConfig` carries grid, block, and dynamic shared-memory dimensions.
 - `LaunchConfig1D(n, blockSize)` builds a one-dimensional config covering
   `n` elements, rounding the grid up.
 - `Arg(buffer)` passes a device-buffer pointer.
 - `ArgValue(value)` passes a fixed-size scalar value.
-- `(*Function).Launch(ctx, cfg, args...)` submits the launch on the default
-  stream. Invalid zero dimensions return `ErrInvalidLaunchConfig`.
+- `(*Function).Launch(ctx, cfg, args...)` submits the launch on the legacy
+  default stream. Invalid zero dimensions return `ErrInvalidLaunchConfig`.
+- `(*Function).LaunchOn(ctx, stream, cfg, args...)` submits on `stream`.
+  Nil, closed, or cross-context streams are rejected before submission.
 
-Cancellation can stop submission, but once submitted `Launch` waits until
-`cuLaunchKernel` returns so temporary Go argument storage remains valid.
+Cancellation can stop submission, but once submitted either launch method waits
+until `cuLaunchKernel` returns so temporary Go argument storage remains valid.
 
-**Lifetime rule:** `Launch` is asynchronous with respect to GPU execution.
-After it returns, the kernel may still be running. Call `Context.Synchronize`
-before reading outputs or closing any buffer or module the kernel touched.
+**Lifetime rule:** launches are asynchronous with respect to GPU execution.
+After either method returns, the kernel may still be running. The launch-time
+locks only protect submission, not the whole kernel lifetime. Call
+`Context.Synchronize` or `Stream.Synchronize` before reading outputs or closing
+any buffer or module the kernel touched.
 
 ## errors
 
@@ -373,9 +443,12 @@ Go-side sentinels:
 - `ErrEmptyFunctionName`: `Module.Function` was given an empty name.
 - `ErrInvalidFunctionName`: `Module.Function` was given a name containing a null byte (CUDA would silently truncate it).
 - `ErrNilFunction`: a method was called on a nil `*Function`.
-- `ErrInvalidLaunchConfig`: `Function.Launch` was given zero grid or block dimensions.
-- `ErrNilKernelArg`: `Function.Launch` was given a nil `KernelArg`.
-- `ErrContextMismatch`: a kernel argument belongs to a different context from the function.
+- `ErrNilStream`: a method was called on a nil `*Stream`.
+- `ErrStreamClosed`: a method was called on a `*Stream` after `Close`.
+- `ErrInvalidStreamPriority`: `WithStreamPriority` received a value that cannot fit in CUDA's C `int` priority parameter.
+- `ErrInvalidLaunchConfig`: `Function.Launch` or `LaunchOn` was given zero grid or block dimensions.
+- `ErrNilKernelArg`: `Function.Launch` or `LaunchOn` was given a nil `KernelArg`.
+- `ErrContextMismatch`: a kernel argument or stream belongs to a different context from the function.
 
 Returned CUDA errors for codes outside the table still match with:
 

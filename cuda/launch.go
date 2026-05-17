@@ -125,12 +125,35 @@ func (a valueKernelArg[T]) appendKernelArg(b *kernelArgBuilder) error {
 	return nil
 }
 
-// Launch enqueues the function on the context's default stream. Cancellation
-// can prevent submission, but once submitted Launch waits until cuLaunchKernel
-// returns so temporary argument storage remains valid. The kernel itself may
-// still be running after Launch returns; call Context.Synchronize before
-// reading outputs or closing resources used by the launch.
+// Launch enqueues the function on the context's legacy default stream.
+// Cancellation can prevent submission, but once submitted Launch waits until
+// cuLaunchKernel returns so temporary argument storage remains valid. The
+// kernel itself may still be running after Launch returns; call
+// Context.Synchronize before reading outputs or closing resources used by the
+// launch.
 func (f *Function) Launch(ctx context.Context, cfg LaunchConfig, args ...KernelArg) error {
+	return f.launch(ctx, defaultStream, nil, cfg, args...)
+}
+
+// LaunchOn enqueues the function on stream. The stream must belong to the same
+// Context as the Function. Cancellation and resource-lifetime rules match
+// Launch; use stream.Synchronize to wait for work submitted to that stream.
+func (f *Function) LaunchOn(ctx context.Context, stream *Stream, cfg LaunchConfig, args ...KernelArg) error {
+	if f == nil {
+		return ErrNilFunction
+	}
+	if stream == nil {
+		return ErrNilStream
+	}
+	stream.opMu.RLock()
+	defer stream.opMu.RUnlock()
+	if stream.closed {
+		return ErrStreamClosed
+	}
+	return f.launch(ctx, stream.raw, stream.ctx, cfg, args...)
+}
+
+func (f *Function) launch(ctx context.Context, rawStream cudasys.CUstream, streamCtx *Context, cfg LaunchConfig, args ...KernelArg) error {
 	if f == nil {
 		return ErrNilFunction
 	}
@@ -139,6 +162,9 @@ func (f *Function) Launch(ctx context.Context, cfg LaunchConfig, args ...KernelA
 	}
 	if f.module == nil {
 		return ErrNilModule
+	}
+	if streamCtx != nil && streamCtx != f.module.ctx {
+		return ErrContextMismatch
 	}
 
 	f.module.opMu.RLock()
@@ -165,7 +191,7 @@ func (f *Function) Launch(ctx context.Context, cfg LaunchConfig, args ...KernelA
 			cfg.GridX, cfg.GridY, cfg.GridZ,
 			cfg.BlockX, cfg.BlockY, cfg.BlockZ,
 			cfg.SharedMemBytes,
-			defaultStream,
+			rawStream,
 			builder.packed.Params(),
 		)
 	})

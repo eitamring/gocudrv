@@ -62,6 +62,10 @@ type Driver struct {
     CuModuleLoadData          func(module *CUmodule, image *byte) CUresult
     CuModuleUnload            func(module CUmodule) CUresult
     CuModuleGetFunction       func(fn *CUfunction, module CUmodule, name *byte) CUresult
+    CuStreamCreate            func(stream *CUstream, flags uint32) CUresult
+    CuStreamCreateWithPriority func(stream *CUstream, flags uint32, priority int32) CUresult
+    CuStreamDestroy           func(stream CUstream) CUresult
+    CuStreamSynchronize       func(stream CUstream) CUresult
     CuLaunchKernel            func(fn CUfunction, ..., kernelParams *unsafe.Pointer, extra *unsafe.Pointer) CUresult
 }
 ```
@@ -89,6 +93,10 @@ type Driver struct {
 - `cuModuleLoadData`
 - `cuModuleUnload`
 - `cuModuleGetFunction`
+- `cuStreamCreate`
+- `cuStreamCreateWithPriority`
+- `cuStreamDestroy_v2`
+- `cuStreamSynchronize`
 - `cuLaunchKernel`
 
 If any bind fails, `Load` closes the library before returning. On successful
@@ -161,7 +169,7 @@ memory and the device without staging through a pageable bounce buffer.
 It is also recommended for `cuMemcpy*Async` to get predictable overlap
 and best throughput; pageable host regions are accepted by the async
 APIs in current drivers but the behavior is less predictable. The async
-path lands in the streams PR.
+path lands after streams.
 
 `Buffer.CopyFromHost` and `Buffer.CopyToHost` hold the source/destination
 `HostBuffer`'s `sync.RWMutex` read lock across the executor call so
@@ -219,7 +227,22 @@ pointer. It takes the buffer read lock while the driver call is in flight so
 stores fixed-size scalar values directly. Cross-context buffer arguments are
 rejected before submission.
 
-Launch currently uses the default CUDA stream. Returning from `cuLaunchKernel`
-only means the launch was submitted; GPU execution may continue afterward.
-Callers must keep buffers and modules open until synchronization confirms the
-kernel is done.
+## streams
+
+`Context.NewStream` creates streams with `CU_STREAM_NON_BLOCKING` so work
+submitted to them does not implicitly synchronize with the legacy default
+stream. The no-option path calls `cuStreamCreate`; `WithStreamPriority` switches
+creation to `cuStreamCreateWithPriority`. `Stream.Synchronize` uses the
+cancellable wait path; `Stream.Close` uses the strict cleanup path and is
+retryable on driver failure.
+
+`Function.Launch` still targets the legacy default stream for the simplest
+path. `Function.LaunchOn` takes a stream read lock during `cuLaunchKernel`
+submission so `Stream.Close` cannot destroy the handle while the launch call is
+in flight. CUDA allows stream destruction with queued work still pending; the
+driver releases the stream resources after the work completes.
+
+Returning from `cuLaunchKernel` only means the launch was submitted; GPU
+execution may continue afterward. The read locks held by `Launch` / `LaunchOn`
+protect only submission. Callers must keep buffers and modules open until
+synchronization confirms the kernel is done.

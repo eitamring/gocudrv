@@ -44,6 +44,10 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		{"cuModuleLoadData fails", "cuModuleLoadData"},
 		{"cuModuleUnload fails", "cuModuleUnload"},
 		{"cuModuleGetFunction fails", "cuModuleGetFunction"},
+		{"cuStreamCreate fails", "cuStreamCreate"},
+		{"cuStreamCreateWithPriority fails", "cuStreamCreateWithPriority"},
+		{"cuStreamDestroy_v2 fails", "cuStreamDestroy_v2"},
+		{"cuStreamSynchronize fails", "cuStreamSynchronize"},
 		{"cuLaunchKernel fails", "cuLaunchKernel"},
 	}
 	for _, tc := range cases {
