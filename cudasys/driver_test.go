@@ -33,6 +33,7 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		{"cuCtxGetCurrent fails", "cuCtxGetCurrent"},
 		{"cuCtxSetCurrent fails", "cuCtxSetCurrent"},
 		{"cuCtxSynchronize fails", "cuCtxSynchronize"},
+		{"cuCtxGetStreamPriorityRange fails", "cuCtxGetStreamPriorityRange"},
 		{"cuDevicePrimaryCtxRetain fails", "cuDevicePrimaryCtxRetain"},
 		{"cuDevicePrimaryCtxRelease_v2 fails", "cuDevicePrimaryCtxRelease_v2"},
 		{"cuMemAlloc_v2 fails", "cuMemAlloc_v2"},
@@ -44,6 +45,10 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		{"cuModuleLoadData fails", "cuModuleLoadData"},
 		{"cuModuleUnload fails", "cuModuleUnload"},
 		{"cuModuleGetFunction fails", "cuModuleGetFunction"},
+		{"cuStreamCreate fails", "cuStreamCreate"},
+		{"cuStreamCreateWithPriority fails", "cuStreamCreateWithPriority"},
+		{"cuStreamDestroy_v2 fails", "cuStreamDestroy_v2"},
+		{"cuStreamSynchronize fails", "cuStreamSynchronize"},
 		{"cuLaunchKernel fails", "cuLaunchKernel"},
 	}
 	for _, tc := range cases {

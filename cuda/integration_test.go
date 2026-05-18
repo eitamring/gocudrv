@@ -58,6 +58,13 @@ func TestRealPrimaryContext(t *testing.T) {
 		if err := ctx.Synchronize(context.Background()); err != nil {
 			t.Errorf("Synchronize cycle %d: %v", cycle, err)
 		}
+		least, greatest, err := ctx.StreamPriorityRange()
+		if err != nil {
+			t.Errorf("StreamPriorityRange cycle %d: %v", cycle, err)
+		}
+		if greatest > least {
+			t.Errorf("StreamPriorityRange cycle %d = (%d, %d), want greatest <= least", cycle, least, greatest)
+		}
 		if err := ctx.Close(); err != nil {
 			t.Errorf("Close cycle %d: %v", cycle, err)
 		}
@@ -277,6 +284,90 @@ func TestRealVectorAddLaunch(t *testing.T) {
 		}
 	}
 	t.Logf("launched vector_add for %d elements", n)
+}
+
+func TestRealVectorAddLaunchOnStream(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+	stream, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream: %v", err)
+	}
+	t.Cleanup(func() { _ = stream.Close() })
+
+	const n = 1024
+	aHost := make([]float32, n)
+	bHost := make([]float32, n)
+	for i := range aHost {
+		aHost[i] = float32(i)
+		bHost[i] = float32(i) * 2
+	}
+
+	a, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc a: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+	b, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc b: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	out, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc out: %v", err)
+	}
+	t.Cleanup(func() { _ = out.Close() })
+
+	bg := context.Background()
+	if err := a.CopyFrom(bg, aHost); err != nil {
+		t.Fatalf("CopyFrom a: %v", err)
+	}
+	if err := b.CopyFrom(bg, bHost); err != nil {
+		t.Fatalf("CopyFrom b: %v", err)
+	}
+
+	mod, err := ctx.LoadModuleFromFile("testdata/vector_add.ptx")
+	if err != nil {
+		t.Fatalf("LoadModuleFromFile: %v", err)
+	}
+	t.Cleanup(func() { _ = mod.Close() })
+	fn, err := mod.Function("vector_add")
+	if err != nil {
+		t.Fatalf("Function: %v", err)
+	}
+
+	if err := fn.LaunchOn(bg, stream, LaunchConfig1D(n, 256),
+		Arg(a),
+		Arg(b),
+		Arg(out),
+		ArgValue(int32(n)),
+	); err != nil {
+		t.Fatalf("LaunchOn: %v", err)
+	}
+	if err := stream.Synchronize(bg); err != nil {
+		t.Fatalf("Stream.Synchronize: %v", err)
+	}
+
+	got := make([]float32, n)
+	if err := out.CopyTo(bg, got); err != nil {
+		t.Fatalf("CopyTo out: %v", err)
+	}
+	for i := range got {
+		want := aHost[i] + bHost[i]
+		if got[i] != want {
+			t.Fatalf("out[%d] = %v, want %v", i, got[i], want)
+		}
+	}
+	t.Logf("launched vector_add for %d elements on an explicit stream", n)
 }
 
 func TestRealDeviceEnum(t *testing.T) {

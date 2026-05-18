@@ -16,6 +16,7 @@ type ctxCalls struct {
 	release    atomic.Int32
 	setCurrent atomic.Int32
 	sync       atomic.Int32
+	priority   atomic.Int32
 	lastSetCtx atomic.Uintptr
 }
 
@@ -42,6 +43,12 @@ func fakeContextDriver(c *ctxCalls, ctxHandle cudasys.CUcontext) *cudasys.Driver
 		},
 		CuCtxSynchronize: func() cudasys.CUresult {
 			c.sync.Add(1)
+			return cudasys.CUDA_SUCCESS
+		},
+		CuCtxGetStreamPriorityRange: func(least, greatest *int32) cudasys.CUresult {
+			c.priority.Add(1)
+			*least = 0
+			*greatest = -2
 			return cudasys.CUDA_SUCCESS
 		},
 	}
@@ -193,6 +200,34 @@ func TestSynchronize(t *testing.T) {
 	}
 	if calls.sync.Load() != 1 {
 		t.Errorf("sync calls = %d, want 1", calls.sync.Load())
+	}
+}
+
+func TestStreamPriorityRange(t *testing.T) {
+	var calls ctxCalls
+	installDriver(t, fakeContextDriver(&calls, 0xC0FFEE))
+
+	dev, _ := GetDevice(0)
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+
+	least, greatest, err := ctx.StreamPriorityRange()
+	if err != nil {
+		t.Fatalf("StreamPriorityRange: %v", err)
+	}
+	if least != 0 || greatest != -2 {
+		t.Errorf("range = (%d, %d), want (0, -2)", least, greatest)
+	}
+	if calls.priority.Load() != 1 {
+		t.Errorf("priority calls = %d, want 1", calls.priority.Load())
+	}
+
+	var nilCtx *Context
+	if _, _, err := nilCtx.StreamPriorityRange(); !errors.Is(err, ErrNilContext) {
+		t.Errorf("nil context err = %v, want ErrNilContext", err)
 	}
 }
 

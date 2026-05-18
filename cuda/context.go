@@ -84,6 +84,29 @@ func (c *Context) Synchronize(ctx context.Context) error {
 	})
 }
 
+// StreamPriorityRange returns the least and greatest meaningful stream
+// priorities for this context. Lower numeric values represent higher priority;
+// the meaningful CUDA interval is [greatest, least]. Devices without priority
+// support return (0, 0).
+func (c *Context) StreamPriorityRange() (least, greatest int, err error) {
+	if c == nil {
+		return 0, 0, ErrNilContext
+	}
+	err = c.do(context.Background(), func() error {
+		l, g, e := cudaresult.CtxGetStreamPriorityRange(c.driver)
+		if e != nil {
+			return e
+		}
+		least = int(l)
+		greatest = int(g)
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return least, greatest, nil
+}
+
 // do runs fn on the context's executor with cancellation. Internal entry
 // point for future memory, module, stream, and launch code so every CUDA
 // call that needs context affinity routes through the same pinned thread.
