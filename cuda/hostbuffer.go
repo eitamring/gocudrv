@@ -14,7 +14,7 @@ import (
 // without going through its internal staging buffer, so transfers are
 // faster than copies from pageable Go slices. Pinned host memory is also
 // recommended for predictable async-copy overlap and best throughput
-// once stream copies land in a later PR; pageable host memory is still
+// once async copies land in a later PR; pageable host memory is still
 // accepted by the async APIs but its behavior is less predictable.
 //
 // Lifetime rule: a HostBuffer must be closed before its owning Context

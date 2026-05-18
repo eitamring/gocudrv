@@ -12,8 +12,9 @@ import (
 )
 
 type launchFake struct {
-	launchCalls atomic.Int32
-	params      []unsafe.Pointer
+	launchCalls    atomic.Int32
+	params         []unsafe.Pointer
+	expectedStream cudasys.CUstream
 }
 
 func (l *launchFake) driver(t testing.TB) *cudasys.Driver {
@@ -66,8 +67,8 @@ func (l *launchFake) driver(t testing.TB) *cudasys.Driver {
 			if sharedMemBytes != 32 {
 				t.Errorf("shared = %d, want 32", sharedMemBytes)
 			}
-			if stream != 0 {
-				t.Errorf("stream = %#x, want default stream", stream)
+			if stream != l.expectedStream {
+				t.Errorf("stream = %#x, want %#x", stream, l.expectedStream)
 			}
 			if extra != nil {
 				t.Errorf("extra = %p, want nil", extra)
@@ -205,6 +206,41 @@ func TestFunctionLaunchPacksArgs(t *testing.T) {
 	}
 }
 
+func TestFunctionLaunchOnUsesStream(t *testing.T) {
+	var l launchFake
+	l.expectedStream = 0x5151
+	drv := l.driver(t)
+	drv.CuStreamCreate = func(stream *cudasys.CUstream, flags uint32) cudasys.CUresult {
+		if flags != streamNonBlocking {
+			t.Errorf("flags = %d, want %d", flags, streamNonBlocking)
+		}
+		*stream = 0x5151
+		return cudasys.CUDA_SUCCESS
+	}
+	drv.CuStreamDestroy = func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_SUCCESS }
+	installDriver(t, drv)
+
+	dev, _ := GetDevice(0)
+	ctx, _ := dev.Primary()
+	t.Cleanup(func() { _ = ctx.Close() })
+	stream, _ := ctx.NewStream()
+	t.Cleanup(func() { _ = stream.Close() })
+	mod, _ := ctx.LoadModule([]byte{'P', 0})
+	t.Cleanup(func() { _ = mod.Close() })
+	fn, _ := mod.Function("k")
+	buf, _ := Alloc[float32](ctx, 4)
+	t.Cleanup(func() { _ = buf.Close() })
+
+	cfg := LaunchConfig1D(1024, 256)
+	cfg.SharedMemBytes = 32
+	if err := fn.LaunchOn(context.Background(), stream, cfg, Arg(buf)); err != nil {
+		t.Fatalf("LaunchOn: %v", err)
+	}
+	if l.launchCalls.Load() != 1 {
+		t.Errorf("launch calls = %d, want 1", l.launchCalls.Load())
+	}
+}
+
 func TestFunctionLaunchRejects(t *testing.T) {
 	ctx, mod, fn, buf := newLaunchFixture(t)
 	_ = ctx
@@ -220,6 +256,22 @@ func TestFunctionLaunchRejects(t *testing.T) {
 	closedBuf, _ := Alloc[float32](mod.ctx, 4)
 	if err := closedBuf.Close(); err != nil {
 		t.Fatalf("close buffer: %v", err)
+	}
+	streamDriver := (&launchFake{}).driver(t)
+	streamDriver.CuStreamCreate = func(stream *cudasys.CUstream, _ uint32) cudasys.CUresult {
+		*stream = 0x5151
+		return cudasys.CUDA_SUCCESS
+	}
+	streamDriver.CuStreamDestroy = func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_SUCCESS }
+	installDriver(t, streamDriver)
+	streamCtxDev, _ := GetDevice(0)
+	streamCtx, _ := streamCtxDev.Primary()
+	t.Cleanup(func() { _ = streamCtx.Close() })
+	stream, _ := streamCtx.NewStream()
+	t.Cleanup(func() { _ = stream.Close() })
+	closedStream, _ := streamCtx.NewStream()
+	if err := closedStream.Close(); err != nil {
+		t.Fatalf("close stream: %v", err)
 	}
 
 	cases := []struct {
@@ -240,6 +292,9 @@ func TestFunctionLaunchRejects(t *testing.T) {
 		{"nil buffer", func() error { return fn.Launch(context.Background(), LaunchConfig1D(1, 1), Arg[float32](nil)) }, ErrNilBuffer},
 		{"closed buffer", func() error { return fn.Launch(context.Background(), LaunchConfig1D(1, 1), Arg(closedBuf)) }, ErrBufferClosed},
 		{"wrong context", func() error { return fn.Launch(context.Background(), LaunchConfig1D(1, 1), Arg(otherBuf)) }, ErrContextMismatch},
+		{"nil stream", func() error { return fn.LaunchOn(context.Background(), nil, LaunchConfig1D(1, 1)) }, ErrNilStream},
+		{"closed stream", func() error { return fn.LaunchOn(context.Background(), closedStream, LaunchConfig1D(1, 1)) }, ErrStreamClosed},
+		{"wrong stream context", func() error { return fn.LaunchOn(context.Background(), stream, LaunchConfig1D(1, 1)) }, ErrContextMismatch},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -349,4 +404,87 @@ func TestFunctionLaunchHoldsModuleAndBufferLocksDuringCall(t *testing.T) {
 	if err := <-closeBufferDone; err != nil {
 		t.Errorf("buffer close: %v", err)
 	}
+}
+
+func TestFunctionLaunchOnHoldsStreamLockDuringCall(t *testing.T) {
+	launchEntered := make(chan struct{})
+	mayFinish := make(chan struct{})
+	installDriver(t, &cudasys.Driver{
+		CuDeviceGetCount: func(n *int32) cudasys.CUresult { *n = 1; return cudasys.CUDA_SUCCESS },
+		CuDeviceGet: func(dev *cudasys.CUdevice, _ int32) cudasys.CUresult {
+			*dev = 0
+			return cudasys.CUDA_SUCCESS
+		},
+		CuDevicePrimaryCtxRetain: func(ctx *cudasys.CUcontext, _ cudasys.CUdevice) cudasys.CUresult {
+			*ctx = 0xC0FFEE
+			return cudasys.CUDA_SUCCESS
+		},
+		CuDevicePrimaryCtxRelease: func(cudasys.CUdevice) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
+		CuCtxSetCurrent:           func(cudasys.CUcontext) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
+		CuMemAlloc: func(p *cudasys.CUdeviceptr, _ uint64) cudasys.CUresult {
+			*p = 0xDEAD
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemFree: func(cudasys.CUdeviceptr) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
+		CuModuleLoadData: func(mod *cudasys.CUmodule, _ *byte) cudasys.CUresult {
+			*mod = 0xBEEF
+			return cudasys.CUDA_SUCCESS
+		},
+		CuModuleUnload: func(cudasys.CUmodule) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
+		CuModuleGetFunction: func(fn *cudasys.CUfunction, _ cudasys.CUmodule, _ *byte) cudasys.CUresult {
+			*fn = 0xCAFE
+			return cudasys.CUDA_SUCCESS
+		},
+		CuStreamCreate: func(stream *cudasys.CUstream, _ uint32) cudasys.CUresult {
+			*stream = 0x5151
+			return cudasys.CUDA_SUCCESS
+		},
+		CuStreamDestroy: func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
+		CuLaunchKernel: func(
+			cudasys.CUfunction,
+			uint32, uint32, uint32,
+			uint32, uint32, uint32,
+			uint32,
+			cudasys.CUstream,
+			*unsafe.Pointer,
+			*unsafe.Pointer,
+		) cudasys.CUresult {
+			close(launchEntered)
+			<-mayFinish
+			return cudasys.CUDA_SUCCESS
+		},
+	})
+	dev, _ := GetDevice(0)
+	ctx, _ := dev.Primary()
+	t.Cleanup(func() { _ = ctx.Close() })
+	stream, _ := ctx.NewStream()
+	mod, _ := ctx.LoadModule([]byte{'P', 0})
+	fn, _ := mod.Function("k")
+
+	launchDone := make(chan error, 1)
+	go func() {
+		launchDone <- fn.LaunchOn(context.Background(), stream, LaunchConfig1D(1, 1))
+	}()
+	select {
+	case <-launchEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("launch did not enter driver")
+	}
+
+	closeStreamDone := make(chan error, 1)
+	go func() { closeStreamDone <- stream.Close() }()
+	select {
+	case err := <-closeStreamDone:
+		t.Fatalf("stream close returned during launch: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(mayFinish)
+	if err := <-launchDone; err != nil {
+		t.Errorf("LaunchOn: %v", err)
+	}
+	if err := <-closeStreamDone; err != nil {
+		t.Errorf("stream close: %v", err)
+	}
+	_ = mod.Close()
 }
