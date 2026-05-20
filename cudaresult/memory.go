@@ -40,6 +40,24 @@ func MemcpyDtoH(d *cudasys.Driver, dst *byte, src cudasys.CUdeviceptr, bytes uin
 	return check("cuMemcpyDtoH_v2", d.CuMemcpyDtoH(dst, src, bytes))
 }
 
+// MemcpyHtoDAsync enqueues a host-to-device copy on stream and returns after
+// the driver accepts the work.
+func MemcpyHtoDAsync(d *cudasys.Driver, dst cudasys.CUdeviceptr, src *byte, bytes uint64, stream cudasys.CUstream) error {
+	if d == nil || d.CuMemcpyHtoDAsync == nil {
+		return ErrNotInitialized
+	}
+	return check("cuMemcpyHtoDAsync_v2", d.CuMemcpyHtoDAsync(dst, src, bytes, stream))
+}
+
+// MemcpyDtoHAsync enqueues a device-to-host copy on stream and returns after
+// the driver accepts the work.
+func MemcpyDtoHAsync(d *cudasys.Driver, dst *byte, src cudasys.CUdeviceptr, bytes uint64, stream cudasys.CUstream) error {
+	if d == nil || d.CuMemcpyDtoHAsync == nil {
+		return ErrNotInitialized
+	}
+	return check("cuMemcpyDtoHAsync_v2", d.CuMemcpyDtoHAsync(dst, src, bytes, stream))
+}
+
 // MemAllocHost allocates bytes of page-locked host memory and returns the
 // host pointer. The pointer is suitable for direct DMA by the GPU.
 func MemAllocHost(d *cudasys.Driver, bytes uint64) (*byte, error) {
