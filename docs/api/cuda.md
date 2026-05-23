@@ -307,6 +307,9 @@ if err := stream.Synchronize(context.Background()); err != nil {
 - `(*Stream).Synchronize(ctx context.Context) error` waits until preceding
   work in that stream finishes. Canceling `ctx` stops the wait; queued GPU work
   continues.
+- `(*Stream).WaitEvent(event *Event, opts ...WaitOption) error` makes later
+  work in this stream wait until `event` completes. No public wait options are
+  exposed yet; zero options means CUDA's default wait behavior.
 - `(*Stream).Close() error` destroys the stream. Idempotent after a successful
   destroy; failed destroys leave the stream open so `Close` can be retried.
 
@@ -323,6 +326,63 @@ stream.
 Canceling `Stream.Synchronize` only stops the caller's wait. It does not stop
 the queued GPU work or the underlying CUDA synchronization already running on
 the executor thread; a later `Stream.Close` will still wait behind that work.
+
+## events
+
+`Event` marks a position in a stream. Use events to order work across streams
+without synchronizing the whole stream back to the CPU.
+
+```go
+ready, err := ctx.NewEvent()
+if err != nil {
+    log.Fatal(err)
+}
+defer ready.Close()
+
+if err := ready.Record(copyStream); err != nil {
+    log.Fatal(err)
+}
+if err := computeStream.WaitEvent(ready); err != nil {
+    log.Fatal(err)
+}
+```
+
+- `(*Context).NewEvent(opts ...EventOption) (*Event, error)` creates an event.
+- `WithEventBlockingSync()` asks CUDA to block the host thread while waiting on
+  this event instead of spin-waiting.
+- `WithEventDisableTiming()` disables timestamp recording. Use it for ordering
+  events that will not be used with `Elapsed`.
+- `(*Event).Record(stream *Stream) error` enqueues the event in `stream`.
+- `(*Event).Query() error` returns nil if the event is complete,
+  `ErrNotReady` if it is still pending, or another CUDA error if the driver
+  reports one.
+- `(*Event).Synchronize(ctx context.Context) error` waits until the event
+  completes. Canceling `ctx` stops the caller's wait; queued GPU work continues.
+- `(*Event).Elapsed(end *Event) (time.Duration, error)` returns GPU time
+  between two recorded timing-enabled events.
+- `(*Event).Close() error` destroys the event. Idempotent after a successful
+  destroy; failed destroys leave the event open so `Close` can be retried.
+
+Nil event methods return `ErrNilEvent`. Methods called after successful close
+return `ErrEventClosed`. Events and streams must belong to the same `Context`;
+cross-context waits or elapsed-time calls return `ErrContextMismatch`.
+
+Record and wait methods do not take `context.Context` because they enqueue only
+a small ordering marker. This is intentionally different from async memory
+copies, where cancellation can still matter because the driver may spend real
+time accepting the transfer request. `Event.Synchronize` is the wait operation,
+so it is the cancellable method.
+
+**Timing rule:** both events passed to `Elapsed` must have timing enabled and
+must have completed. If either event is not ready yet, CUDA can return
+`ErrNotReady`. If an event was created with `WithEventDisableTiming`, `Elapsed`
+returns `ErrEventTimingDisabled` before calling CUDA.
+
+**Lifetime rule:** close events before their owning `Context`. If a queued
+stream wait still references an event, `Event.Close` is still safe: CUDA defers
+resource cleanup until pending references complete. This is different from
+buffers and pinned host memory, where closing too early can free memory the GPU
+is still touching.
 
 ## modules
 

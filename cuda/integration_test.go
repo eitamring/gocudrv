@@ -234,6 +234,105 @@ func TestRealPinnedHostAsyncRoundTrip(t *testing.T) {
 	t.Logf("async round-tripped %d float32 (%d bytes) through pinned host and device buffers", n, n*4)
 }
 
+func TestRealEventStreamWait(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+	copyIn, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream copyIn: %v", err)
+	}
+	t.Cleanup(func() { _ = copyIn.Close() })
+	copyOut, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream copyOut: %v", err)
+	}
+	t.Cleanup(func() { _ = copyOut.Close() })
+	start, err := ctx.NewEvent()
+	if err != nil {
+		t.Fatalf("NewEvent start: %v", err)
+	}
+	t.Cleanup(func() { _ = start.Close() })
+	ready, err := ctx.NewEvent(WithEventDisableTiming())
+	if err != nil {
+		t.Fatalf("NewEvent ready: %v", err)
+	}
+	t.Cleanup(func() { _ = ready.Close() })
+	done, err := ctx.NewEvent()
+	if err != nil {
+		t.Fatalf("NewEvent done: %v", err)
+	}
+	t.Cleanup(func() { _ = done.Close() })
+
+	const n = 1024
+	hostA, err := AllocHost[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("AllocHost A: %v", err)
+	}
+	t.Cleanup(func() { _ = hostA.Close() })
+	hostB, err := AllocHost[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("AllocHost B: %v", err)
+	}
+	t.Cleanup(func() { _ = hostB.Close() })
+	dev0, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc device: %v", err)
+	}
+	t.Cleanup(func() { _ = dev0.Close() })
+
+	srcView := hostA.Slice()
+	for i := range srcView {
+		srcView[i] = float32(i) * 0.75
+	}
+
+	bg := context.Background()
+	if err := start.Record(copyIn); err != nil {
+		t.Fatalf("start.Record: %v", err)
+	}
+	if err := dev0.CopyFromHostAsync(bg, copyIn, hostA); err != nil {
+		t.Fatalf("CopyFromHostAsync: %v", err)
+	}
+	if err := ready.Record(copyIn); err != nil {
+		t.Fatalf("ready.Record: %v", err)
+	}
+	if err := ready.Query(); !errors.Is(err, ErrNotReady) && err != nil {
+		t.Fatalf("ready.Query: %v", err)
+	}
+	if err := copyOut.WaitEvent(ready); err != nil {
+		t.Fatalf("WaitEvent: %v", err)
+	}
+	if err := dev0.CopyToHostAsync(bg, copyOut, hostB); err != nil {
+		t.Fatalf("CopyToHostAsync: %v", err)
+	}
+	if err := done.Record(copyOut); err != nil {
+		t.Fatalf("done.Record: %v", err)
+	}
+	if err := done.Synchronize(bg); err != nil {
+		t.Fatalf("done.Synchronize: %v", err)
+	}
+	elapsed, err := start.Elapsed(done)
+	if err != nil {
+		t.Fatalf("Elapsed: %v", err)
+	}
+
+	a := hostA.Slice()
+	b := hostB.Slice()
+	for i := range a {
+		if a[i] != b[i] {
+			t.Fatalf("event-ordered round-trip mismatch at %d: a=%v b=%v", i, a[i], b[i])
+		}
+	}
+	t.Logf("event-ordered async round-trip %d float32 (%d bytes), elapsed %v", n, n*4, elapsed)
+}
+
 func TestRealModuleLoad(t *testing.T) {
 	initOrSkip(t)
 	dev, err := GetDevice(0)

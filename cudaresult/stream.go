@@ -42,3 +42,68 @@ func StreamSynchronize(d *cudasys.Driver, stream cudasys.CUstream) error {
 	}
 	return check("cuStreamSynchronize", d.CuStreamSynchronize(stream))
 }
+
+// StreamWaitEvent makes stream wait until event has completed.
+func StreamWaitEvent(d *cudasys.Driver, stream cudasys.CUstream, event cudasys.CUevent, flags uint32) error {
+	if d == nil || d.CuStreamWaitEvent == nil {
+		return ErrNotInitialized
+	}
+	return check("cuStreamWaitEvent", d.CuStreamWaitEvent(stream, event, flags))
+}
+
+// EventCreate creates a CUDA event with the supplied creation flags.
+func EventCreate(d *cudasys.Driver, flags uint32) (cudasys.CUevent, error) {
+	if d == nil || d.CuEventCreate == nil {
+		return 0, ErrNotInitialized
+	}
+	var event cudasys.CUevent
+	if err := check("cuEventCreate", d.CuEventCreate(&event, flags)); err != nil {
+		return 0, err
+	}
+	return event, nil
+}
+
+// EventDestroy destroys an event previously returned by EventCreate.
+func EventDestroy(d *cudasys.Driver, event cudasys.CUevent) error {
+	if d == nil || d.CuEventDestroy == nil {
+		return ErrNotInitialized
+	}
+	return check("cuEventDestroy_v2", d.CuEventDestroy(event))
+}
+
+// EventRecord records event into stream.
+func EventRecord(d *cudasys.Driver, event cudasys.CUevent, stream cudasys.CUstream) error {
+	if d == nil || d.CuEventRecord == nil {
+		return ErrNotInitialized
+	}
+	return check("cuEventRecord", d.CuEventRecord(event, stream))
+}
+
+// EventQuery reports whether event has completed. It returns ErrNotReady if
+// CUDA reports the event is still pending.
+func EventQuery(d *cudasys.Driver, event cudasys.CUevent) error {
+	if d == nil || d.CuEventQuery == nil {
+		return ErrNotInitialized
+	}
+	return check("cuEventQuery", d.CuEventQuery(event))
+}
+
+// EventSynchronize blocks until event has completed.
+func EventSynchronize(d *cudasys.Driver, event cudasys.CUevent) error {
+	if d == nil || d.CuEventSynchronize == nil {
+		return ErrNotInitialized
+	}
+	return check("cuEventSynchronize", d.CuEventSynchronize(event))
+}
+
+// EventElapsedTime returns milliseconds elapsed between two recorded events.
+func EventElapsedTime(d *cudasys.Driver, start, end cudasys.CUevent) (float32, error) {
+	if d == nil || d.CuEventElapsedTime == nil {
+		return 0, ErrNotInitialized
+	}
+	var ms float32
+	if err := check("cuEventElapsedTime", d.CuEventElapsedTime(&ms, start, end)); err != nil {
+		return 0, err
+	}
+	return ms, nil
+}

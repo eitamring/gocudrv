@@ -4,8 +4,8 @@ Pure-Go bindings for the NVIDIA CUDA Driver API. No cgo. The driver library is
 loaded dynamically at runtime.
 
 Status: very early. The current API covers initialization, device discovery,
-primary contexts, memory, module loading, kernel launch, explicit streams, and
-async pinned copies.
+primary contexts, memory, module loading, kernel launch, explicit streams,
+events, and async pinned copies.
 
 ## What it is
 
@@ -19,6 +19,7 @@ A thin Go wrapper around `libcuda.so.1` / `nvcuda.dll` so a Go program can:
 - load precompiled PTX
 - launch kernels
 - create and synchronize streams
+- record/query events and wait across streams
 - enqueue async pinned-memory copies
 
 All without `cgo`, a C compiler, or the CUDA toolkit being installed at build
@@ -98,7 +99,8 @@ scripts/       build and check helpers
 6. kernel launch with arg packing
 7. streams
 8. async host/device copies
-9. events and basic benchmarking
+9. events and stream waits
+10. basic benchmarking
 
 ## License
 
