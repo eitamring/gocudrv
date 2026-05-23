@@ -69,6 +69,13 @@ type Driver struct {
     CuStreamCreateWithPriority func(stream *CUstream, flags uint32, priority int32) CUresult
     CuStreamDestroy           func(stream CUstream) CUresult
     CuStreamSynchronize       func(stream CUstream) CUresult
+    CuStreamWaitEvent         func(stream CUstream, event CUevent, flags uint32) CUresult
+    CuEventCreate             func(event *CUevent, flags uint32) CUresult
+    CuEventDestroy            func(event CUevent) CUresult
+    CuEventRecord             func(event CUevent, stream CUstream) CUresult
+    CuEventQuery              func(event CUevent) CUresult
+    CuEventSynchronize        func(event CUevent) CUresult
+    CuEventElapsedTime        func(ms *float32, start CUevent, end CUevent) CUresult
     CuLaunchKernel            func(fn CUfunction, ..., kernelParams *unsafe.Pointer, extra *unsafe.Pointer) CUresult
 }
 ```
@@ -103,6 +110,13 @@ type Driver struct {
 - `cuStreamCreateWithPriority`
 - `cuStreamDestroy_v2`
 - `cuStreamSynchronize`
+- `cuStreamWaitEvent`
+- `cuEventCreate`
+- `cuEventDestroy_v2`
+- `cuEventRecord`
+- `cuEventQuery`
+- `cuEventSynchronize`
+- `cuEventElapsedTime`
 - `cuLaunchKernel`
 
 If any bind fails, `Load` closes the library before returning. On successful
@@ -198,10 +212,19 @@ Those locks protect the enqueue call only. The caller must synchronize the
 stream before reading async copy results or closing resources touched by the
 queued copy.
 
-The next stream primitive should be events: `cuEventRecord`,
-`cuStreamWaitEvent`, and `cuEventSynchronize`. Without events, async copies
-work for single-stream pipelines, but cross-stream ordering still has to fall
-back to full stream synchronization.
+Events use the same resource pattern as streams: `Event.Close` takes the event
+write lock, while `Record`, `Query`, `Synchronize`, `Elapsed`, and
+`Stream.WaitEvent` take read locks. `Record` and `WaitEvent` lock the stream
+first and the event second; async-copy submission follows the same idea but
+then also locks the device and host buffers it touches. `Elapsed` locks both
+events in pointer order so concurrent `a.Elapsed(b)` and `b.Elapsed(a)` cannot
+deadlock.
+
+`Event.Record` and `Stream.WaitEvent` use the strict `doWait` executor path
+because they enqueue ordering work and need the stream/event handles to remain
+valid until the driver accepts that work. `Event.Synchronize` is cancellable
+like stream synchronization: cancellation stops the caller's wait, not the GPU
+work or the underlying CUDA wait already running on the executor.
 
 ## PTX null-termination
 

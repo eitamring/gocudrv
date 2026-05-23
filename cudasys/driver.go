@@ -42,6 +42,13 @@ type Driver struct {
 	CuStreamCreateWithPriority  func(stream *CUstream, flags uint32, priority int32) CUresult
 	CuStreamDestroy             func(stream CUstream) CUresult
 	CuStreamSynchronize         func(stream CUstream) CUresult
+	CuStreamWaitEvent           func(stream CUstream, event CUevent, flags uint32) CUresult
+	CuEventCreate               func(event *CUevent, flags uint32) CUresult
+	CuEventDestroy              func(event CUevent) CUresult
+	CuEventRecord               func(event CUevent, stream CUstream) CUresult
+	CuEventQuery                func(event CUevent) CUresult
+	CuEventSynchronize          func(event CUevent) CUresult
+	CuEventElapsedTime          func(ms *float32, start CUevent, end CUevent) CUresult
 	CuLaunchKernel              func(fn CUfunction, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemBytes uint32, stream CUstream, kernelParams *unsafe.Pointer, extra *unsafe.Pointer) CUresult
 }
 
@@ -85,6 +92,13 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuStreamCreateWithPriority, "cuStreamCreateWithPriority"},
 		{&d.CuStreamDestroy, "cuStreamDestroy_v2"},
 		{&d.CuStreamSynchronize, "cuStreamSynchronize"},
+		{&d.CuStreamWaitEvent, "cuStreamWaitEvent"},
+		{&d.CuEventCreate, "cuEventCreate"},
+		{&d.CuEventDestroy, "cuEventDestroy_v2"},
+		{&d.CuEventRecord, "cuEventRecord"},
+		{&d.CuEventQuery, "cuEventQuery"},
+		{&d.CuEventSynchronize, "cuEventSynchronize"},
+		{&d.CuEventElapsedTime, "cuEventElapsedTime"},
 		{&d.CuLaunchKernel, "cuLaunchKernel"},
 	}
 	for _, b := range binds {

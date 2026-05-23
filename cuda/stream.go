@@ -28,6 +28,24 @@ func (f streamOptionFunc) apply(opts *streamOptions) {
 	f(opts)
 }
 
+// WaitOption customizes Stream.WaitEvent. No public wait options are exposed
+// yet; the option shape keeps the call site stable if CUDA wait flags become
+// useful later.
+type WaitOption interface {
+	apply(*waitOptions)
+}
+
+type waitOptions struct {
+	flags uint32
+	err   error
+}
+
+type waitOptionFunc func(*waitOptions)
+
+func (f waitOptionFunc) apply(opts *waitOptions) {
+	f(opts)
+}
+
 // WithStreamPriority requests a CUDA scheduling priority for the new stream.
 // Lower numeric values represent higher priority, and 0 is the default. CUDA
 // clamps priorities that are outside the device's supported range; use
@@ -110,6 +128,43 @@ func (s *Stream) Synchronize(ctx context.Context) error {
 	}
 	return s.ctx.do(ctx, func() error {
 		return cudaresult.StreamSynchronize(s.ctx.driver, s.raw)
+	})
+}
+
+// WaitEvent enqueues a dependency in stream. Work submitted to stream after
+// this call waits until event completes.
+func (s *Stream) WaitEvent(event *Event, options ...WaitOption) error {
+	if s == nil {
+		return ErrNilStream
+	}
+	if event == nil {
+		return ErrNilEvent
+	}
+	opts := waitOptions{flags: waitEventDefault}
+	for _, option := range options {
+		if option == nil {
+			continue
+		}
+		option.apply(&opts)
+		if opts.err != nil {
+			return opts.err
+		}
+	}
+	s.opMu.RLock()
+	defer s.opMu.RUnlock()
+	if s.closed {
+		return ErrStreamClosed
+	}
+	event.opMu.RLock()
+	defer event.opMu.RUnlock()
+	if event.closed {
+		return ErrEventClosed
+	}
+	if s.ctx != event.ctx {
+		return ErrContextMismatch
+	}
+	return s.ctx.doWait(context.Background(), func() error {
+		return cudaresult.StreamWaitEvent(s.ctx.driver, s.raw, event.raw, opts.flags)
 	})
 }
 
