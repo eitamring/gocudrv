@@ -321,3 +321,123 @@ func TestMemcpyDtoH(t *testing.T) {
 		})
 	}
 }
+
+func TestMemcpyHtoDAsync(t *testing.T) {
+	srcData := []byte{1, 2, 3, 4, 5}
+	src := &srcData[0]
+
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		wantErr error
+	}{
+		{"nil driver", nil, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuMemcpyHtoDAsync: func(dst cudasys.CUdeviceptr, s *byte, b uint64, stream cudasys.CUstream) cudasys.CUresult {
+				if dst != 0xCAFE {
+					t.Errorf("dst = %#x, want 0xCAFE", dst)
+				}
+				if b != uint64(len(srcData)) {
+					t.Errorf("bytes = %d, want %d", b, len(srcData))
+				}
+				if stream != 0x5151 {
+					t.Errorf("stream = %#x, want 0x5151", stream)
+				}
+				got := unsafe.Slice(s, b)
+				for i := range got {
+					if got[i] != srcData[i] {
+						t.Errorf("byte[%d] = %d, want %d", i, got[i], srcData[i])
+					}
+				}
+				return cudasys.CUDA_SUCCESS
+			}},
+			nil,
+		},
+		{
+			"invalid value",
+			&cudasys.Driver{CuMemcpyHtoDAsync: func(cudasys.CUdeviceptr, *byte, uint64, cudasys.CUstream) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}},
+			ErrInvalidValue,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := MemcpyHtoDAsync(tc.driver, 0xCAFE, src, uint64(len(srcData)), 0x5151)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Errorf("unexpected err: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestMemcpyDtoHAsync(t *testing.T) {
+	dstData := make([]byte, 5)
+	dst := &dstData[0]
+
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		wantErr error
+		fill    []byte
+	}{
+		{"nil driver", nil, ErrNotInitialized, nil},
+		{"nil func", &cudasys.Driver{}, ErrNotInitialized, nil},
+		{
+			"success",
+			&cudasys.Driver{CuMemcpyDtoHAsync: func(d *byte, src cudasys.CUdeviceptr, b uint64, stream cudasys.CUstream) cudasys.CUresult {
+				if src != 0xCAFE {
+					t.Errorf("src = %#x, want 0xCAFE", src)
+				}
+				if b != 5 {
+					t.Errorf("bytes = %d, want 5", b)
+				}
+				if stream != 0x5151 {
+					t.Errorf("stream = %#x, want 0x5151", stream)
+				}
+				copy(unsafe.Slice(d, b), []byte{10, 20, 30, 40, 50})
+				return cudasys.CUDA_SUCCESS
+			}},
+			nil,
+			[]byte{10, 20, 30, 40, 50},
+		},
+		{
+			"invalid value",
+			&cudasys.Driver{CuMemcpyDtoHAsync: func(*byte, cudasys.CUdeviceptr, uint64, cudasys.CUstream) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}},
+			ErrInvalidValue,
+			nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for i := range dstData {
+				dstData[i] = 0
+			}
+			err := MemcpyDtoHAsync(tc.driver, dst, 0xCAFE, 5, 0x5151)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Errorf("unexpected err: %v", err)
+				}
+				for i, want := range tc.fill {
+					if dstData[i] != want {
+						t.Errorf("dst[%d] = %d, want %d", i, dstData[i], want)
+					}
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}

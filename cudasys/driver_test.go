@@ -40,6 +40,8 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		{"cuMemFree_v2 fails", "cuMemFree_v2"},
 		{"cuMemcpyHtoD_v2 fails", "cuMemcpyHtoD_v2"},
 		{"cuMemcpyDtoH_v2 fails", "cuMemcpyDtoH_v2"},
+		{"cuMemcpyHtoDAsync_v2 fails", "cuMemcpyHtoDAsync_v2"},
+		{"cuMemcpyDtoHAsync_v2 fails", "cuMemcpyDtoHAsync_v2"},
 		{"cuMemAllocHost_v2 fails", "cuMemAllocHost_v2"},
 		{"cuMemFreeHost fails", "cuMemFreeHost"},
 		{"cuModuleLoadData fails", "cuModuleLoadData"},

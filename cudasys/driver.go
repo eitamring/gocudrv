@@ -31,6 +31,8 @@ type Driver struct {
 	CuMemFree                   func(devPtr CUdeviceptr) CUresult
 	CuMemcpyHtoD                func(dst CUdeviceptr, src *byte, byteCount uint64) CUresult
 	CuMemcpyDtoH                func(dst *byte, src CUdeviceptr, byteCount uint64) CUresult
+	CuMemcpyHtoDAsync           func(dst CUdeviceptr, src *byte, byteCount uint64, stream CUstream) CUresult
+	CuMemcpyDtoHAsync           func(dst *byte, src CUdeviceptr, byteCount uint64, stream CUstream) CUresult
 	CuMemAllocHost              func(pp **byte, bytesize uint64) CUresult
 	CuMemFreeHost               func(p *byte) CUresult
 	CuModuleLoadData            func(module *CUmodule, image *byte) CUresult
@@ -72,6 +74,8 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuMemFree, "cuMemFree_v2"},
 		{&d.CuMemcpyHtoD, "cuMemcpyHtoD_v2"},
 		{&d.CuMemcpyDtoH, "cuMemcpyDtoH_v2"},
+		{&d.CuMemcpyHtoDAsync, "cuMemcpyHtoDAsync_v2"},
+		{&d.CuMemcpyDtoHAsync, "cuMemcpyDtoHAsync_v2"},
 		{&d.CuMemAllocHost, "cuMemAllocHost_v2"},
 		{&d.CuMemFreeHost, "cuMemFreeHost"},
 		{&d.CuModuleLoadData, "cuModuleLoadData"},

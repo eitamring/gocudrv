@@ -13,12 +13,15 @@ import (
 )
 
 type memCalls struct {
-	alloc    atomic.Int32
-	free     atomic.Int32
-	htod     atomic.Int32
-	dtoh     atomic.Int32
-	lastPtr  atomic.Uintptr
-	lastSize atomic.Uint64
+	alloc      atomic.Int32
+	free       atomic.Int32
+	htod       atomic.Int32
+	dtoh       atomic.Int32
+	htodAsync  atomic.Int32
+	dtohAsync  atomic.Int32
+	lastPtr    atomic.Uintptr
+	lastSize   atomic.Uint64
+	lastStream atomic.Uintptr
 }
 
 func fakeMemoryDriver(c *memCalls, basePtr uint64) *cudasys.Driver {
@@ -51,6 +54,16 @@ func fakeMemoryDriver(c *memCalls, basePtr uint64) *cudasys.Driver {
 		},
 		CuMemcpyDtoH: func(_ *byte, _ cudasys.CUdeviceptr, _ uint64) cudasys.CUresult {
 			c.dtoh.Add(1)
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemcpyHtoDAsync: func(_ cudasys.CUdeviceptr, _ *byte, _ uint64, stream cudasys.CUstream) cudasys.CUresult {
+			c.htodAsync.Add(1)
+			c.lastStream.Store(uintptr(stream))
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemcpyDtoHAsync: func(_ *byte, _ cudasys.CUdeviceptr, _ uint64, stream cudasys.CUstream) cudasys.CUresult {
+			c.dtohAsync.Add(1)
+			c.lastStream.Store(uintptr(stream))
 			return cudasys.CUDA_SUCCESS
 		},
 	}
@@ -470,6 +483,286 @@ func TestCopyToHappy(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("got[%d] = %v, want %v", i, got[i], want[i])
 		}
+	}
+}
+
+func newAsyncCopyFixture(t *testing.T, calls *memCalls) (*Context, *Stream, *Buffer[float32], *HostBuffer[float32]) {
+	t.Helper()
+	drv := fakeMemoryDriver(calls, 0xDEAD)
+	drv.CuMemAllocHost = func(pp **byte, bytes uint64) cudasys.CUresult {
+		storage := make([]byte, int(bytes))
+		*pp = &storage[0]
+		return cudasys.CUDA_SUCCESS
+	}
+	drv.CuMemFreeHost = func(*byte) cudasys.CUresult { return cudasys.CUDA_SUCCESS }
+	drv.CuStreamCreate = func(stream *cudasys.CUstream, flags uint32) cudasys.CUresult {
+		if flags != streamNonBlocking {
+			t.Errorf("stream flags = %d, want %d", flags, streamNonBlocking)
+		}
+		*stream = 0x5151
+		return cudasys.CUDA_SUCCESS
+	}
+	drv.CuStreamDestroy = func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_SUCCESS }
+	drv.CuStreamSynchronize = func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_SUCCESS }
+
+	ctx := newTestContext(t, drv)
+	stream, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream: %v", err)
+	}
+	t.Cleanup(func() { _ = stream.Close() })
+	buf, err := Alloc[float32](ctx, 4)
+	if err != nil {
+		t.Fatalf("Alloc: %v", err)
+	}
+	t.Cleanup(func() { _ = buf.Close() })
+	host, err := AllocHost[float32](ctx, 4)
+	if err != nil {
+		t.Fatalf("AllocHost: %v", err)
+	}
+	t.Cleanup(func() { _ = host.Close() })
+	return ctx, stream, buf, host
+}
+
+func TestCopyFromHostAsyncHappy(t *testing.T) {
+	var calls memCalls
+	var captured []byte
+	_, stream, buf, host := newAsyncCopyFixture(t, &calls)
+	src := host.Slice()
+	for i := range src {
+		src[i] = float32(i + 1)
+	}
+	buf.ctx.driver.CuMemcpyHtoDAsync = func(dst cudasys.CUdeviceptr, src *byte, bytes uint64, stream cudasys.CUstream) cudasys.CUresult {
+		calls.htodAsync.Add(1)
+		calls.lastStream.Store(uintptr(stream))
+		if dst != 0xDEAD {
+			t.Errorf("dst = %#x, want 0xDEAD", dst)
+		}
+		captured = append([]byte(nil), unsafe.Slice(src, bytes)...)
+		return cudasys.CUDA_SUCCESS
+	}
+
+	if err := buf.CopyFromHostAsync(context.Background(), stream, host); err != nil {
+		t.Fatalf("CopyFromHostAsync: %v", err)
+	}
+	if calls.htodAsync.Load() != 1 {
+		t.Errorf("async htod calls = %d, want 1", calls.htodAsync.Load())
+	}
+	if calls.lastStream.Load() != 0x5151 {
+		t.Errorf("stream = %#x, want 0x5151", calls.lastStream.Load())
+	}
+	wantBytes := unsafe.Slice((*byte)(unsafe.Pointer(&src[0])), len(src)*4)
+	for i := range wantBytes {
+		if captured[i] != wantBytes[i] {
+			t.Errorf("captured[%d] = %d, want %d", i, captured[i], wantBytes[i])
+			break
+		}
+	}
+}
+
+func TestCopyToHostAsyncHappy(t *testing.T) {
+	var calls memCalls
+	_, stream, buf, host := newAsyncCopyFixture(t, &calls)
+	want := []float32{1.5, 2.5, 3.5, 4.5}
+	buf.ctx.driver.CuMemcpyDtoHAsync = func(dst *byte, src cudasys.CUdeviceptr, bytes uint64, stream cudasys.CUstream) cudasys.CUresult {
+		calls.dtohAsync.Add(1)
+		calls.lastStream.Store(uintptr(stream))
+		if src != 0xDEAD {
+			t.Errorf("src = %#x, want 0xDEAD", src)
+		}
+		copy(unsafe.Slice(dst, bytes), unsafe.Slice((*byte)(unsafe.Pointer(&want[0])), len(want)*4))
+		return cudasys.CUDA_SUCCESS
+	}
+
+	if err := buf.CopyToHostAsync(context.Background(), stream, host); err != nil {
+		t.Fatalf("CopyToHostAsync: %v", err)
+	}
+	if calls.dtohAsync.Load() != 1 {
+		t.Errorf("async dtoh calls = %d, want 1", calls.dtohAsync.Load())
+	}
+	got := host.Slice()
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestCopyHostAsyncRejects(t *testing.T) {
+	var calls memCalls
+	ctx, stream, buf, host := newAsyncCopyFixture(t, &calls)
+	_, otherStream, _, otherHost := newAsyncCopyFixture(t, &memCalls{})
+
+	closedBuf, err := Alloc[float32](ctx, 4)
+	if err != nil {
+		t.Fatalf("Alloc closedBuf: %v", err)
+	}
+	if err := closedBuf.Close(); err != nil {
+		t.Fatalf("close closedBuf: %v", err)
+	}
+	closedHost, err := AllocHost[float32](ctx, 4)
+	if err != nil {
+		t.Fatalf("AllocHost closedHost: %v", err)
+	}
+	if err := closedHost.Close(); err != nil {
+		t.Fatalf("close closedHost: %v", err)
+	}
+	closedStream, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream closedStream: %v", err)
+	}
+	if err := closedStream.Close(); err != nil {
+		t.Fatalf("close closedStream: %v", err)
+	}
+	shortHost, err := AllocHost[float32](ctx, 2)
+	if err != nil {
+		t.Fatalf("AllocHost shortHost: %v", err)
+	}
+	t.Cleanup(func() { _ = shortHost.Close() })
+
+	cases := []struct {
+		name string
+		fn   func() error
+		want error
+	}{
+		{"nil buffer from", func() error {
+			var b *Buffer[float32]
+			return b.CopyFromHostAsync(context.Background(), stream, host)
+		}, ErrNilBuffer},
+		{"nil host from", func() error { return buf.CopyFromHostAsync(context.Background(), stream, nil) }, ErrNilBuffer},
+		{"nil stream from", func() error { return buf.CopyFromHostAsync(context.Background(), nil, host) }, ErrNilStream},
+		{"closed stream from", func() error { return buf.CopyFromHostAsync(context.Background(), closedStream, host) }, ErrStreamClosed},
+		{"closed buffer from", func() error { return closedBuf.CopyFromHostAsync(context.Background(), stream, host) }, ErrBufferClosed},
+		{"closed host from", func() error { return buf.CopyFromHostAsync(context.Background(), stream, closedHost) }, ErrBufferClosed},
+		{"length mismatch from", func() error { return buf.CopyFromHostAsync(context.Background(), stream, shortHost) }, ErrLengthMismatch},
+		{"wrong stream context from", func() error { return buf.CopyFromHostAsync(context.Background(), otherStream, host) }, ErrContextMismatch},
+		{"wrong host context from", func() error { return buf.CopyFromHostAsync(context.Background(), stream, otherHost) }, ErrContextMismatch},
+		{"nil buffer to", func() error {
+			var b *Buffer[float32]
+			return b.CopyToHostAsync(context.Background(), stream, host)
+		}, ErrNilBuffer},
+		{"nil host to", func() error { return buf.CopyToHostAsync(context.Background(), stream, nil) }, ErrNilBuffer},
+		{"nil stream to", func() error { return buf.CopyToHostAsync(context.Background(), nil, host) }, ErrNilStream},
+		{"closed stream to", func() error { return buf.CopyToHostAsync(context.Background(), closedStream, host) }, ErrStreamClosed},
+		{"closed buffer to", func() error { return closedBuf.CopyToHostAsync(context.Background(), stream, host) }, ErrBufferClosed},
+		{"closed host to", func() error { return buf.CopyToHostAsync(context.Background(), stream, closedHost) }, ErrBufferClosed},
+		{"length mismatch to", func() error { return buf.CopyToHostAsync(context.Background(), stream, shortHost) }, ErrLengthMismatch},
+		{"wrong stream context to", func() error { return buf.CopyToHostAsync(context.Background(), otherStream, host) }, ErrContextMismatch},
+		{"wrong host context to", func() error { return buf.CopyToHostAsync(context.Background(), stream, otherHost) }, ErrContextMismatch},
+		{"driver error from", func() error {
+			buf.ctx.driver.CuMemcpyHtoDAsync = func(cudasys.CUdeviceptr, *byte, uint64, cudasys.CUstream) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}
+			return buf.CopyFromHostAsync(context.Background(), stream, host)
+		}, ErrInvalidValue},
+		{"driver error to", func() error {
+			buf.ctx.driver.CuMemcpyDtoHAsync = func(*byte, cudasys.CUdeviceptr, uint64, cudasys.CUstream) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}
+			return buf.CopyToHostAsync(context.Background(), stream, host)
+		}, ErrInvalidValue},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.fn(); !errors.Is(err, tc.want) {
+				t.Errorf("err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestCopyHostAsyncCanceledBeforeSubmit(t *testing.T) {
+	var calls memCalls
+	_, stream, buf, host := newAsyncCopyFixture(t, &calls)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := buf.CopyFromHostAsync(ctx, stream, host); !errors.Is(err, context.Canceled) {
+		t.Errorf("CopyFromHostAsync err = %v, want context.Canceled", err)
+	}
+	if err := buf.CopyToHostAsync(ctx, stream, host); !errors.Is(err, context.Canceled) {
+		t.Errorf("CopyToHostAsync err = %v, want context.Canceled", err)
+	}
+	if calls.htodAsync.Load() != 0 {
+		t.Errorf("async htod calls = %d, want 0", calls.htodAsync.Load())
+	}
+	if calls.dtohAsync.Load() != 0 {
+		t.Errorf("async dtoh calls = %d, want 0", calls.dtohAsync.Load())
+	}
+}
+
+func TestCopyHostAsyncCanceledAfterSubmitWaitsForEnqueue(t *testing.T) {
+	cases := []struct {
+		name      string
+		install   func(*Buffer[float32], *memCalls)
+		copy      func(context.Context, *Buffer[float32], *Stream, *HostBuffer[float32]) error
+		callCount func(*memCalls) int32
+	}{
+		{
+			name: "from host",
+			install: func(buf *Buffer[float32], calls *memCalls) {
+				buf.ctx.driver.CuMemcpyHtoDAsync = func(cudasys.CUdeviceptr, *byte, uint64, cudasys.CUstream) cudasys.CUresult {
+					time.Sleep(50 * time.Millisecond)
+					calls.htodAsync.Add(1)
+					return cudasys.CUDA_SUCCESS
+				}
+			},
+			copy: func(ctx context.Context, buf *Buffer[float32], stream *Stream, host *HostBuffer[float32]) error {
+				return buf.CopyFromHostAsync(ctx, stream, host)
+			},
+			callCount: func(calls *memCalls) int32 { return calls.htodAsync.Load() },
+		},
+		{
+			name: "to host",
+			install: func(buf *Buffer[float32], calls *memCalls) {
+				buf.ctx.driver.CuMemcpyDtoHAsync = func(*byte, cudasys.CUdeviceptr, uint64, cudasys.CUstream) cudasys.CUresult {
+					time.Sleep(50 * time.Millisecond)
+					calls.dtohAsync.Add(1)
+					return cudasys.CUDA_SUCCESS
+				}
+			},
+			copy: func(ctx context.Context, buf *Buffer[float32], stream *Stream, host *HostBuffer[float32]) error {
+				return buf.CopyToHostAsync(ctx, stream, host)
+			},
+			callCount: func(calls *memCalls) int32 { return calls.dtohAsync.Load() },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls memCalls
+			_, stream, buf, host := newAsyncCopyFixture(t, &calls)
+			tc.install(buf, &calls)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+			defer cancel()
+
+			start := time.Now()
+			if err := tc.copy(ctx, buf, stream, host); err != nil {
+				t.Errorf("copy err = %v, want nil", err)
+			}
+			if elapsed := time.Since(start); elapsed < 50*time.Millisecond {
+				t.Errorf("copy returned before enqueue completed: %v", elapsed)
+			}
+			if got := tc.callCount(&calls); got != 1 {
+				t.Errorf("async copy calls = %d, want 1", got)
+			}
+		})
+	}
+}
+
+func TestCopyFromHostAsyncDoesNotHoldResourcesAfterEnqueue(t *testing.T) {
+	var calls memCalls
+	_, stream, buf, host := newAsyncCopyFixture(t, &calls)
+
+	if err := buf.CopyFromHostAsync(context.Background(), stream, host); err != nil {
+		t.Fatalf("CopyFromHostAsync: %v", err)
+	}
+	if err := host.Close(); err != nil {
+		t.Fatalf("HostBuffer.Close after async enqueue = %v, want nil", err)
+	}
+	if err := buf.Close(); err != nil {
+		t.Fatalf("Buffer.Close after async enqueue = %v, want nil", err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatalf("Stream.Close after async enqueue = %v, want nil", err)
 	}
 }
 

@@ -58,6 +58,8 @@ type Driver struct {
     CuMemFree                 func(devPtr CUdeviceptr) CUresult
     CuMemcpyHtoD              func(dst CUdeviceptr, src *byte, byteCount uint64) CUresult
     CuMemcpyDtoH              func(dst *byte, src CUdeviceptr, byteCount uint64) CUresult
+    CuMemcpyHtoDAsync         func(dst CUdeviceptr, src *byte, byteCount uint64, stream CUstream) CUresult
+    CuMemcpyDtoHAsync         func(dst *byte, src CUdeviceptr, byteCount uint64, stream CUstream) CUresult
     CuMemAllocHost            func(pp **byte, bytesize uint64) CUresult
     CuMemFreeHost             func(p *byte) CUresult
     CuModuleLoadData          func(module *CUmodule, image *byte) CUresult
@@ -90,6 +92,8 @@ type Driver struct {
 - `cuMemFree_v2`
 - `cuMemcpyHtoD_v2`
 - `cuMemcpyDtoH_v2`
+- `cuMemcpyHtoDAsync_v2`
+- `cuMemcpyDtoHAsync_v2`
 - `cuMemAllocHost_v2`
 - `cuMemFreeHost`
 - `cuModuleLoadData`
@@ -135,10 +139,14 @@ GPU work; the function still runs to completion on the executor thread and
 its result is discarded. The result channel is buffered so the worker does
 not block when the caller has walked away.
 
-Memory copies use a stricter executor path: cancellation can stop submission,
-but once a copy is submitted the caller waits until it finishes. This prevents
-callers from mutating or reusing Go host slices while CUDA is still reading or
-writing them.
+Synchronous memory copies use a stricter executor path: cancellation can stop
+submission, but once a copy is submitted the caller waits until it finishes.
+This prevents callers from mutating or reusing Go host slices while CUDA is
+still reading or writing them.
+
+Async pinned-memory copies also use the strict submit path, but only wait until
+`cuMemcpy*Async` returns. That keeps stream and buffer handles stable while the
+driver accepts the work without pretending the GPU copy is complete.
 
 Panics inside `fn` are recovered and surfaced as `*executor.PanicError`;
 the executor stays alive so the caller can keep using it or close it.
@@ -170,8 +178,8 @@ Pinned memory matters because the CUDA driver can DMA between pinned host
 memory and the device without staging through a pageable bounce buffer.
 It is also recommended for `cuMemcpy*Async` to get predictable overlap
 and best throughput; pageable host regions are accepted by the async
-APIs in current drivers but the behavior is less predictable. The async
-path lands after streams.
+APIs in current drivers but the behavior is less predictable. The public async
+copy API therefore accepts `HostBuffer` only.
 
 `Buffer.CopyFromHost` and `Buffer.CopyToHost` hold the source/destination
 `HostBuffer`'s `sync.RWMutex` read lock across the executor call so
@@ -183,6 +191,17 @@ guarantee because the slice header carries no back-reference to the
 Both `cuMemAllocHost_v2` and `cuMemFreeHost` run on the context executor
 via the same strict `doWait` path used by `cuMemAlloc_v2` / `cuMemFree_v2`:
 cancellation can stop submission but not abandon an in-flight call.
+
+`Buffer.CopyFromHostAsync` and `Buffer.CopyToHostAsync` hold the stream,
+device-buffer, and host-buffer read locks while submitting the async copy.
+Those locks protect the enqueue call only. The caller must synchronize the
+stream before reading async copy results or closing resources touched by the
+queued copy.
+
+The next stream primitive should be events: `cuEventRecord`,
+`cuStreamWaitEvent`, and `cuEventSynchronize`. Without events, async copies
+work for single-stream pipelines, but cross-stream ordering still has to fall
+back to full stream synchronization.
 
 ## PTX null-termination
 
