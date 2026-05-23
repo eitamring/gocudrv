@@ -51,6 +51,13 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		{"cuStreamCreateWithPriority fails", "cuStreamCreateWithPriority"},
 		{"cuStreamDestroy_v2 fails", "cuStreamDestroy_v2"},
 		{"cuStreamSynchronize fails", "cuStreamSynchronize"},
+		{"cuStreamWaitEvent fails", "cuStreamWaitEvent"},
+		{"cuEventCreate fails", "cuEventCreate"},
+		{"cuEventDestroy_v2 fails", "cuEventDestroy_v2"},
+		{"cuEventRecord fails", "cuEventRecord"},
+		{"cuEventQuery fails", "cuEventQuery"},
+		{"cuEventSynchronize fails", "cuEventSynchronize"},
+		{"cuEventElapsedTime fails", "cuEventElapsedTime"},
 		{"cuLaunchKernel fails", "cuLaunchKernel"},
 	}
 	for _, tc := range cases {
