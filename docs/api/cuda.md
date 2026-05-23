@@ -162,6 +162,10 @@ if err := buf.CopyTo(bg, dst); err != nil {
 - `(*Buffer[T]).CopyToHost(ctx context.Context, dst *HostBuffer[T]) error`
   copies to a pinned `HostBuffer`. Same lock-holding guarantee. Prefer
   over `CopyTo` with `host.Slice()` when the destination is pinned.
+- `(*Buffer[T]).CopyFromHostAsync(ctx context.Context, stream *Stream, src *HostBuffer[T]) error`
+  enqueues a pinned host-to-device copy on `stream`.
+- `(*Buffer[T]).CopyToHostAsync(ctx context.Context, stream *Stream, dst *HostBuffer[T]) error`
+  enqueues a device-to-pinned-host copy on `stream`.
 
 Two free-function wrappers exist for callers who prefer the CUDA-style
 naming:
@@ -176,13 +180,30 @@ Both delegate to the methods. Prefer the method form in new code.
 `Alloc` and `Buffer.Close` do not take `context.Context` for the same
 reason as `Primary` and `Context.Close`: they manage ownership and partial
 completion would leak. The copy methods take `context.Context`, but only to
-cancel before the operation is submitted. Cancellation semantics:
+cancel before the operation is submitted. Synchronous copy cancellation
+semantics:
 
 - If `ctx` is already canceled before the call submits to the executor,
   the underlying CUDA copy does not run and the call returns `ctx.Err()`.
 - If `ctx` is canceled after submission, the call still waits for the copy to
   finish. This keeps the host slice exclusively owned by the call while CUDA is
   reading or writing it.
+
+Async pinned-copy methods return after CUDA accepts the work, not after the GPU
+copy finishes. If `ctx` is already canceled before submission, the copy is not
+enqueued and the call returns `ctx.Err()`. If cancellation happens after
+submission, the call still waits until the enqueue call returns so the stream
+and buffer handles remain valid during submission.
+
+An error returned after submission may come from the driver while accepting the
+work. Treat the stream as needing normal error handling; a later
+`Stream.Synchronize` may also report CUDA work failure.
+
+**Async lifetime rule:** after `CopyFromHostAsync`, do not mutate the source
+`HostBuffer` and do not close the source, destination, or stream until
+`Stream.Synchronize` confirms the copy is done. After `CopyToHostAsync`, do not
+read the destination `HostBuffer` and do not close the source, destination, or
+stream until synchronization completes.
 
 **Lifetime rule:** a `Buffer` must be closed before its owning `Context`
 is closed. After the `Context` is closed, `Buffer.Close` cannot reach the
@@ -197,9 +218,8 @@ and close every buffer before the context.
 host memory owned by a `Context`. CUDA can DMA directly to and from this
 memory, skipping its internal staging buffer, so transfers are faster
 than copies from pageable Go slices. Pinned memory is also recommended
-for predictable async-copy overlap and best throughput in the streams
-PR coming later; pageable memory is supported but tends to be slower
-and less predictable.
+for predictable async-copy overlap and best throughput; pageable memory is
+supported by CUDA but tends to be slower and less predictable.
 
 ```go
 host, err := cuda.AllocHost[float32](ctx, 1024)
@@ -243,6 +263,14 @@ for the duration of the copy. `Buffer.CopyFrom` / `CopyTo` with
 prevent another goroutine from closing the `HostBuffer` mid-copy, so the
 typed methods are the safe path for CUDA transfers.
 
+Use `Buffer.CopyFromHostAsync` / `CopyToHostAsync` with an explicit `Stream`
+when you want to enqueue copies that can overlap with other stream work. These
+methods are pinned-buffer only. There is intentionally no
+`CopyFromAsync(ctx, stream, []T)` API: after an async enqueue returns, the GPU
+may still read or write the host memory, and a normal Go slice has no CUDA
+lifetime handle for this package to protect. Do not work around this with
+`unsafe.Pointer(&slice[0])`; use `AllocHost` for async transfers.
+
 Pinned memory is an optional faster path, not a replacement. Pageable Go
 slices are still accepted by `Buffer.CopyFrom` / `CopyTo`. Use pinned
 memory for repeated large transfers and for async copies; for tiny
@@ -256,8 +284,7 @@ owning `Context` is closed.
 `Stream` is an ordered queue of GPU work owned by a `Context`. New streams are
 created as non-blocking streams, so work submitted to them does not implicitly
 synchronize with the legacy default stream. Explicit streams give the API a
-place to route independent work; the visible overlap benefit arrives with the
-async-copy methods planned next.
+place to route independent work and async pinned-memory copies.
 
 ```go
 stream, err := ctx.NewStream()

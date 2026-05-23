@@ -174,6 +174,66 @@ func TestRealPinnedHostRoundTrip(t *testing.T) {
 	t.Logf("round-tripped %d float32 (%d bytes) through pinned host and device buffers", n, n*4)
 }
 
+func TestRealPinnedHostAsyncRoundTrip(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+	stream, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream: %v", err)
+	}
+	t.Cleanup(func() { _ = stream.Close() })
+
+	const n = 1024
+	hostA, err := AllocHost[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("AllocHost A: %v", err)
+	}
+	t.Cleanup(func() { _ = hostA.Close() })
+	hostB, err := AllocHost[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("AllocHost B: %v", err)
+	}
+	t.Cleanup(func() { _ = hostB.Close() })
+	dev0, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc device: %v", err)
+	}
+	t.Cleanup(func() { _ = dev0.Close() })
+
+	srcView := hostA.Slice()
+	for i := range srcView {
+		srcView[i] = float32(i) * 0.5
+	}
+
+	bg := context.Background()
+	if err := dev0.CopyFromHostAsync(bg, stream, hostA); err != nil {
+		t.Fatalf("CopyFromHostAsync: %v", err)
+	}
+	if err := dev0.CopyToHostAsync(bg, stream, hostB); err != nil {
+		t.Fatalf("CopyToHostAsync: %v", err)
+	}
+	if err := stream.Synchronize(bg); err != nil {
+		t.Fatalf("Stream.Synchronize: %v", err)
+	}
+
+	a := hostA.Slice()
+	b := hostB.Slice()
+	for i := range a {
+		if a[i] != b[i] {
+			t.Fatalf("async round-trip mismatch at %d: a=%v b=%v", i, a[i], b[i])
+		}
+	}
+	t.Logf("async round-tripped %d float32 (%d bytes) through pinned host and device buffers", n, n*4)
+}
+
 func TestRealModuleLoad(t *testing.T) {
 	initOrSkip(t)
 	dev, err := GetDevice(0)

@@ -215,6 +215,82 @@ func (b *Buffer[T]) CopyToHost(ctx context.Context, dst *HostBuffer[T]) error {
 	})
 }
 
+// CopyFromHostAsync enqueues a copy from a pinned HostBuffer into the device
+// buffer on stream. It returns after CUDA accepts the work, not after the GPU
+// copy finishes. The caller must not mutate src or close src, b, or stream
+// until stream.Synchronize confirms the copy is done.
+func (b *Buffer[T]) CopyFromHostAsync(ctx context.Context, stream *Stream, src *HostBuffer[T]) error {
+	if b == nil || src == nil {
+		return ErrNilBuffer
+	}
+	if stream == nil {
+		return ErrNilStream
+	}
+	stream.opMu.RLock()
+	defer stream.opMu.RUnlock()
+	if stream.closed {
+		return ErrStreamClosed
+	}
+	b.opMu.RLock()
+	defer b.opMu.RUnlock()
+	if b.closed {
+		return ErrBufferClosed
+	}
+	src.opMu.RLock()
+	defer src.opMu.RUnlock()
+	if src.closed {
+		return ErrBufferClosed
+	}
+	if stream.ctx != b.ctx || src.ctx != b.ctx {
+		return ErrContextMismatch
+	}
+	if src.length != b.length {
+		return ErrLengthMismatch
+	}
+	bytes := b.bytes
+	return b.ctx.doWait(ctx, func() error {
+		return cudaresult.MemcpyHtoDAsync(b.ctx.driver, b.ptr, src.ptr, bytes, stream.raw)
+	})
+}
+
+// CopyToHostAsync enqueues a copy from the device buffer into a pinned
+// HostBuffer on stream. It returns after CUDA accepts the work, not after the
+// GPU copy finishes. The caller must not read dst or close dst, b, or stream
+// until stream.Synchronize confirms the copy is done.
+func (b *Buffer[T]) CopyToHostAsync(ctx context.Context, stream *Stream, dst *HostBuffer[T]) error {
+	if b == nil || dst == nil {
+		return ErrNilBuffer
+	}
+	if stream == nil {
+		return ErrNilStream
+	}
+	stream.opMu.RLock()
+	defer stream.opMu.RUnlock()
+	if stream.closed {
+		return ErrStreamClosed
+	}
+	b.opMu.RLock()
+	defer b.opMu.RUnlock()
+	if b.closed {
+		return ErrBufferClosed
+	}
+	dst.opMu.RLock()
+	defer dst.opMu.RUnlock()
+	if dst.closed {
+		return ErrBufferClosed
+	}
+	if stream.ctx != b.ctx || dst.ctx != b.ctx {
+		return ErrContextMismatch
+	}
+	if dst.length != b.length {
+		return ErrLengthMismatch
+	}
+	bytes := b.bytes
+	return b.ctx.doWait(ctx, func() error {
+		return cudaresult.MemcpyDtoHAsync(b.ctx.driver, dst.ptr, b.ptr, bytes, stream.raw)
+	})
+}
+
 // CopyHtoD is a thin wrapper around (*Buffer[T]).CopyFrom kept for the
 // CUDA-style naming. Prefer the method form in new code.
 func CopyHtoD[T Supported](ctx context.Context, dst *Buffer[T], src []T) error {
