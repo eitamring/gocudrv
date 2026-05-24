@@ -70,6 +70,15 @@ Adds two `float32` vectors on the GPU using an embedded PTX module and
 verifies the result on the CPU. See `docs/kernels.md` for the full
 workflow from `.cu` source to a running Go program.
 
+For streams, events, and async pinned copies:
+
+```bash
+go run ./examples/event-pipeline
+```
+
+This runs two vector-add batches through a small event-ordered pipeline and
+prints GPU elapsed time from CUDA events.
+
 ## Docs
 
 - [Getting started](docs/getting-started.md)
