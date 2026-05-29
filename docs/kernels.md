@@ -62,7 +62,7 @@ mod, err := ctx.LoadModuleFromFile("./kernels/vector_add.ptx")
 
 ## this repo
 
-The vector-add example keeps both the `.cu` source and checked-in PTX:
+The vector-add examples keep both the `.cu` source and checked-in PTX:
 
 ```bash
 make ptx
@@ -73,7 +73,8 @@ go generate ./examples/vector-add
 ```
 
 Those commands all use the same script. It also keeps
-`cuda/testdata/vector_add.ptx` in sync with the example fixture.
+`cuda/testdata/vector_add.ptx` and `examples/event-pipeline/vector_add.ptx`
+in sync with the example fixture.
 
 Run the example with:
 
@@ -83,3 +84,10 @@ go run ./examples/vector-add
 
 It uses normal Go slices for the shortest path through the API. For larger or
 repeated transfers, use `cuda.AllocHost` with `CopyFromHost` / `CopyToHost`.
+
+The event-pipeline example uses the same kernel with pinned host buffers,
+async copies, explicit streams, and events:
+
+```bash
+go run ./examples/event-pipeline
+```

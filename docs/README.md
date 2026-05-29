@@ -7,7 +7,7 @@ rather than the full roadmap.
 ## pages
 
 - [Getting started](getting-started.md): build, test, WSL2 notes, and the
-  `device-info` and `vector-add` examples.
+  `device-info`, `vector-add`, and `event-pipeline` examples.
 - [Writing and shipping kernels](kernels.md): the `.cu` to `.ptx` to
   `LoadModule` workflow, with both `//go:embed` and load-from-disk
   patterns.

@@ -27,5 +27,5 @@ help:
 	@echo "  race   - run tests with race detector"
 	@echo "  lint   - run golangci-lint"
 	@echo "  nocgo  - build and test with CGO_ENABLED=0"
-	@echo "  ptx    - regenerate examples/vector-add/vector_add.ptx (requires nvcc)"
+	@echo "  ptx    - regenerate checked-in vector_add.ptx copies (requires nvcc)"
 	@echo "  all    - vet, test, lint"
