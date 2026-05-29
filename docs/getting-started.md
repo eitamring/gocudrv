@@ -55,4 +55,10 @@ Run the vector-add example:
 go run ./examples/vector-add
 ```
 
+Run the stream/event pipeline example:
+
+```bash
+go run ./examples/event-pipeline
+```
+
 For the `.cu` to `.ptx` workflow, see [writing and shipping kernels](kernels.md).
