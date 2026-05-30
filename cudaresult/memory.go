@@ -22,6 +22,18 @@ func MemFree(d *cudasys.Driver, ptr cudasys.CUdeviceptr) error {
 	return check("cuMemFree_v2", d.CuMemFree(ptr))
 }
 
+// MemGetInfo returns the free and total device memory in bytes for the current
+// context's device.
+func MemGetInfo(d *cudasys.Driver) (free, total uint64, err error) {
+	if d == nil || d.CuMemGetInfo == nil {
+		return 0, 0, ErrNotInitialized
+	}
+	if err := check("cuMemGetInfo_v2", d.CuMemGetInfo(&free, &total)); err != nil {
+		return 0, 0, err
+	}
+	return free, total, nil
+}
+
 // MemcpyHtoD copies bytes from a host pointer to device memory and blocks
 // until the copy finishes.
 func MemcpyHtoD(d *cudasys.Driver, dst cudasys.CUdeviceptr, src *byte, bytes uint64) error {
@@ -56,6 +68,59 @@ func MemcpyDtoHAsync(d *cudasys.Driver, dst *byte, src cudasys.CUdeviceptr, byte
 		return ErrNotInitialized
 	}
 	return check("cuMemcpyDtoHAsync_v2", d.CuMemcpyDtoHAsync(dst, src, bytes, stream))
+}
+
+// MemcpyDtoD copies bytes between two device pointers and blocks until the copy
+// finishes.
+func MemcpyDtoD(d *cudasys.Driver, dst, src cudasys.CUdeviceptr, bytes uint64) error {
+	if d == nil || d.CuMemcpyDtoD == nil {
+		return ErrNotInitialized
+	}
+	return check("cuMemcpyDtoD_v2", d.CuMemcpyDtoD(dst, src, bytes))
+}
+
+// MemcpyDtoDAsync enqueues a device-to-device copy on stream and returns after
+// the driver accepts the work.
+func MemcpyDtoDAsync(d *cudasys.Driver, dst, src cudasys.CUdeviceptr, bytes uint64, stream cudasys.CUstream) error {
+	if d == nil || d.CuMemcpyDtoDAsync == nil {
+		return ErrNotInitialized
+	}
+	return check("cuMemcpyDtoDAsync_v2", d.CuMemcpyDtoDAsync(dst, src, bytes, stream))
+}
+
+// MemsetD8 sets count bytes at dst to value and blocks until it finishes.
+func MemsetD8(d *cudasys.Driver, dst cudasys.CUdeviceptr, value uint8, count uint64) error {
+	if d == nil || d.CuMemsetD8 == nil {
+		return ErrNotInitialized
+	}
+	return check("cuMemsetD8_v2", d.CuMemsetD8(dst, value, count))
+}
+
+// MemsetD32 sets count 32-bit words at dst to value and blocks until it
+// finishes.
+func MemsetD32(d *cudasys.Driver, dst cudasys.CUdeviceptr, value uint32, count uint64) error {
+	if d == nil || d.CuMemsetD32 == nil {
+		return ErrNotInitialized
+	}
+	return check("cuMemsetD32_v2", d.CuMemsetD32(dst, value, count))
+}
+
+// MemsetD8Async enqueues a byte memset on stream and returns after the driver
+// accepts the work.
+func MemsetD8Async(d *cudasys.Driver, dst cudasys.CUdeviceptr, value uint8, count uint64, stream cudasys.CUstream) error {
+	if d == nil || d.CuMemsetD8Async == nil {
+		return ErrNotInitialized
+	}
+	return check("cuMemsetD8Async", d.CuMemsetD8Async(dst, value, count, stream))
+}
+
+// MemsetD32Async enqueues a 32-bit-word memset on stream and returns after the
+// driver accepts the work.
+func MemsetD32Async(d *cudasys.Driver, dst cudasys.CUdeviceptr, value uint32, count uint64, stream cudasys.CUstream) error {
+	if d == nil || d.CuMemsetD32Async == nil {
+		return ErrNotInitialized
+	}
+	return check("cuMemsetD32Async", d.CuMemsetD32Async(dst, value, count, stream))
 }
 
 // MemAllocHost allocates bytes of page-locked host memory and returns the

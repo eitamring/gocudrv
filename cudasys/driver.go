@@ -29,10 +29,17 @@ type Driver struct {
 	CuDevicePrimaryCtxRelease   func(dev CUdevice) CUresult
 	CuMemAlloc                  func(devPtr *CUdeviceptr, bytesize uint64) CUresult
 	CuMemFree                   func(devPtr CUdeviceptr) CUresult
+	CuMemGetInfo                func(free *uint64, total *uint64) CUresult
 	CuMemcpyHtoD                func(dst CUdeviceptr, src *byte, byteCount uint64) CUresult
 	CuMemcpyDtoH                func(dst *byte, src CUdeviceptr, byteCount uint64) CUresult
+	CuMemcpyDtoD                func(dst CUdeviceptr, src CUdeviceptr, byteCount uint64) CUresult
 	CuMemcpyHtoDAsync           func(dst CUdeviceptr, src *byte, byteCount uint64, stream CUstream) CUresult
 	CuMemcpyDtoHAsync           func(dst *byte, src CUdeviceptr, byteCount uint64, stream CUstream) CUresult
+	CuMemcpyDtoDAsync           func(dst CUdeviceptr, src CUdeviceptr, byteCount uint64, stream CUstream) CUresult
+	CuMemsetD8                  func(dst CUdeviceptr, value uint8, count uint64) CUresult
+	CuMemsetD32                 func(dst CUdeviceptr, value uint32, count uint64) CUresult
+	CuMemsetD8Async             func(dst CUdeviceptr, value uint8, count uint64, stream CUstream) CUresult
+	CuMemsetD32Async            func(dst CUdeviceptr, value uint32, count uint64, stream CUstream) CUresult
 	CuMemAllocHost              func(pp **byte, bytesize uint64) CUresult
 	CuMemFreeHost               func(p *byte) CUresult
 	CuModuleLoadData            func(module *CUmodule, image *byte) CUresult
@@ -79,10 +86,17 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuDevicePrimaryCtxRelease, "cuDevicePrimaryCtxRelease_v2"},
 		{&d.CuMemAlloc, "cuMemAlloc_v2"},
 		{&d.CuMemFree, "cuMemFree_v2"},
+		{&d.CuMemGetInfo, "cuMemGetInfo_v2"},
 		{&d.CuMemcpyHtoD, "cuMemcpyHtoD_v2"},
 		{&d.CuMemcpyDtoH, "cuMemcpyDtoH_v2"},
+		{&d.CuMemcpyDtoD, "cuMemcpyDtoD_v2"},
 		{&d.CuMemcpyHtoDAsync, "cuMemcpyHtoDAsync_v2"},
 		{&d.CuMemcpyDtoHAsync, "cuMemcpyDtoHAsync_v2"},
+		{&d.CuMemcpyDtoDAsync, "cuMemcpyDtoDAsync_v2"},
+		{&d.CuMemsetD8, "cuMemsetD8_v2"},
+		{&d.CuMemsetD32, "cuMemsetD32_v2"},
+		{&d.CuMemsetD8Async, "cuMemsetD8Async"},
+		{&d.CuMemsetD32Async, "cuMemsetD32Async"},
 		{&d.CuMemAllocHost, "cuMemAllocHost_v2"},
 		{&d.CuMemFreeHost, "cuMemFreeHost"},
 		{&d.CuModuleLoadData, "cuModuleLoadData"},

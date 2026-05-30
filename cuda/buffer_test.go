@@ -13,15 +13,19 @@ import (
 )
 
 type memCalls struct {
-	alloc      atomic.Int32
-	free       atomic.Int32
-	htod       atomic.Int32
-	dtoh       atomic.Int32
-	htodAsync  atomic.Int32
-	dtohAsync  atomic.Int32
-	lastPtr    atomic.Uintptr
-	lastSize   atomic.Uint64
-	lastStream atomic.Uintptr
+	alloc       atomic.Int32
+	free        atomic.Int32
+	htod        atomic.Int32
+	dtoh        atomic.Int32
+	htodAsync   atomic.Int32
+	dtohAsync   atomic.Int32
+	dtod        atomic.Int32
+	dtodAsync   atomic.Int32
+	memset      atomic.Int32
+	memsetAsync atomic.Int32
+	lastPtr     atomic.Uintptr
+	lastSize    atomic.Uint64
+	lastStream  atomic.Uintptr
 }
 
 func fakeMemoryDriver(c *memCalls, basePtr uint64) *cudasys.Driver {
@@ -64,6 +68,31 @@ func fakeMemoryDriver(c *memCalls, basePtr uint64) *cudasys.Driver {
 		CuMemcpyDtoHAsync: func(_ *byte, _ cudasys.CUdeviceptr, _ uint64, stream cudasys.CUstream) cudasys.CUresult {
 			c.dtohAsync.Add(1)
 			c.lastStream.Store(uintptr(stream))
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemcpyDtoD: func(_, _ cudasys.CUdeviceptr, _ uint64) cudasys.CUresult {
+			c.dtod.Add(1)
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemcpyDtoDAsync: func(_, _ cudasys.CUdeviceptr, _ uint64, stream cudasys.CUstream) cudasys.CUresult {
+			c.dtodAsync.Add(1)
+			c.lastStream.Store(uintptr(stream))
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemsetD8: func(_ cudasys.CUdeviceptr, _ uint8, n uint64) cudasys.CUresult {
+			c.memset.Add(1)
+			c.lastSize.Store(n)
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemsetD8Async: func(_ cudasys.CUdeviceptr, _ uint8, n uint64, stream cudasys.CUstream) cudasys.CUresult {
+			c.memsetAsync.Add(1)
+			c.lastSize.Store(n)
+			c.lastStream.Store(uintptr(stream))
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemGetInfo: func(free, total *uint64) cudasys.CUresult {
+			*free = 2048
+			*total = 8192
 			return cudasys.CUDA_SUCCESS
 		},
 	}

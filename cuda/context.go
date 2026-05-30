@@ -107,6 +107,27 @@ func (c *Context) StreamPriorityRange() (least, greatest int, err error) {
 	return least, greatest, nil
 }
 
+// MemInfo returns the free and total device memory in bytes for this context's
+// device. The free value reflects the whole device, not just this context.
+func (c *Context) MemInfo() (free, total uint64, err error) {
+	if c == nil {
+		return 0, 0, ErrNilContext
+	}
+	err = c.do(context.Background(), func() error {
+		f, t, e := cudaresult.MemGetInfo(c.driver)
+		if e != nil {
+			return e
+		}
+		free = f
+		total = t
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return free, total, nil
+}
+
 // do runs fn on the context's executor with cancellation. Internal entry
 // point for future memory, module, stream, and launch code so every CUDA
 // call that needs context affinity routes through the same pinned thread.

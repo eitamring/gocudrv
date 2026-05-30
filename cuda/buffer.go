@@ -291,6 +291,119 @@ func (b *Buffer[T]) CopyToHostAsync(ctx context.Context, stream *Stream, dst *Ho
 	})
 }
 
+// Zero sets every byte of the buffer to zero. Blocks until the memset
+// completes. Cancellation semantics match CopyFrom.
+func (b *Buffer[T]) Zero(ctx context.Context) error {
+	if b == nil {
+		return ErrNilBuffer
+	}
+	b.opMu.RLock()
+	defer b.opMu.RUnlock()
+	if b.closed {
+		return ErrBufferClosed
+	}
+	bytes := b.bytes
+	return b.ctx.doWait(ctx, func() error {
+		return cudaresult.MemsetD8(b.ctx.driver, b.ptr, 0, bytes)
+	})
+}
+
+// ZeroAsync enqueues a memset that clears the buffer on stream. It returns
+// after CUDA accepts the work, not after the memset finishes. The caller must
+// not close b or stream until stream.Synchronize confirms the memset is done.
+func (b *Buffer[T]) ZeroAsync(ctx context.Context, stream *Stream) error {
+	if b == nil {
+		return ErrNilBuffer
+	}
+	if stream == nil {
+		return ErrNilStream
+	}
+	stream.opMu.RLock()
+	defer stream.opMu.RUnlock()
+	if stream.closed {
+		return ErrStreamClosed
+	}
+	b.opMu.RLock()
+	defer b.opMu.RUnlock()
+	if b.closed {
+		return ErrBufferClosed
+	}
+	if stream.ctx != b.ctx {
+		return ErrContextMismatch
+	}
+	bytes := b.bytes
+	return b.ctx.doWait(ctx, func() error {
+		return cudaresult.MemsetD8Async(b.ctx.driver, b.ptr, 0, bytes, stream.raw)
+	})
+}
+
+// CopyToDevice copies b.Len() elements from this buffer into another device
+// buffer in the same context. Blocks until the copy completes. Cancellation
+// semantics match CopyFrom.
+func (b *Buffer[T]) CopyToDevice(ctx context.Context, dst *Buffer[T]) error {
+	if b == nil || dst == nil {
+		return ErrNilBuffer
+	}
+	b.opMu.RLock()
+	defer b.opMu.RUnlock()
+	if b.closed {
+		return ErrBufferClosed
+	}
+	dst.opMu.RLock()
+	defer dst.opMu.RUnlock()
+	if dst.closed {
+		return ErrBufferClosed
+	}
+	if dst.ctx != b.ctx {
+		return ErrContextMismatch
+	}
+	if dst.length != b.length {
+		return ErrLengthMismatch
+	}
+	bytes := b.bytes
+	return b.ctx.doWait(ctx, func() error {
+		return cudaresult.MemcpyDtoD(b.ctx.driver, dst.ptr, b.ptr, bytes)
+	})
+}
+
+// CopyToDeviceAsync enqueues a device-to-device copy from this buffer into dst
+// on stream. It returns after CUDA accepts the work, not after the copy
+// finishes. The caller must not close b, dst, or stream until
+// stream.Synchronize confirms the copy is done.
+func (b *Buffer[T]) CopyToDeviceAsync(ctx context.Context, stream *Stream, dst *Buffer[T]) error {
+	if b == nil || dst == nil {
+		return ErrNilBuffer
+	}
+	if stream == nil {
+		return ErrNilStream
+	}
+	stream.opMu.RLock()
+	defer stream.opMu.RUnlock()
+	if stream.closed {
+		return ErrStreamClosed
+	}
+	b.opMu.RLock()
+	defer b.opMu.RUnlock()
+	if b.closed {
+		return ErrBufferClosed
+	}
+	dst.opMu.RLock()
+	defer dst.opMu.RUnlock()
+	if dst.closed {
+		return ErrBufferClosed
+	}
+	if stream.ctx != b.ctx || dst.ctx != b.ctx {
+		return ErrContextMismatch
+	}
+	if dst.length != b.length {
+		return ErrLengthMismatch
+	}
+	bytes := b.bytes
+	return b.ctx.doWait(ctx, func() error {
+		return cudaresult.MemcpyDtoDAsync(b.ctx.driver, dst.ptr, b.ptr, bytes, stream.raw)
+	})
+}
+
 // CopyHtoD is a thin wrapper around (*Buffer[T]).CopyFrom kept for the
 // CUDA-style naming. Prefer the method form in new code.
 func CopyHtoD[T Supported](ctx context.Context, dst *Buffer[T], src []T) error {
