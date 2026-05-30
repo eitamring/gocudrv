@@ -441,3 +441,304 @@ func TestMemcpyDtoHAsync(t *testing.T) {
 		})
 	}
 }
+
+func TestMemGetInfo(t *testing.T) {
+	cases := []struct {
+		name      string
+		driver    *cudasys.Driver
+		wantFree  uint64
+		wantTotal uint64
+		wantErr   error
+	}{
+		{"nil driver", nil, 0, 0, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, 0, 0, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuMemGetInfo: func(free, total *uint64) cudasys.CUresult {
+				*free = 1024
+				*total = 4096
+				return cudasys.CUDA_SUCCESS
+			}},
+			1024, 4096, nil,
+		},
+		{
+			"invalid value",
+			&cudasys.Driver{CuMemGetInfo: func(*uint64, *uint64) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}},
+			0, 0, ErrInvalidValue,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			free, total, err := MemGetInfo(tc.driver)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Errorf("err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if free != tc.wantFree || total != tc.wantTotal {
+				t.Errorf("got (free=%d total=%d), want (free=%d total=%d)", free, total, tc.wantFree, tc.wantTotal)
+			}
+		})
+	}
+}
+
+func TestMemcpyDtoD(t *testing.T) {
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		wantErr error
+	}{
+		{"nil driver", nil, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuMemcpyDtoD: func(dst, src cudasys.CUdeviceptr, bytes uint64) cudasys.CUresult {
+				if dst != 0xAAAA || src != 0xBBBB {
+					t.Errorf("dst=%#x src=%#x, want 0xAAAA/0xBBBB", dst, src)
+				}
+				if bytes != 64 {
+					t.Errorf("bytes = %d, want 64", bytes)
+				}
+				return cudasys.CUDA_SUCCESS
+			}},
+			nil,
+		},
+		{
+			"invalid value",
+			&cudasys.Driver{CuMemcpyDtoD: func(cudasys.CUdeviceptr, cudasys.CUdeviceptr, uint64) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}},
+			ErrInvalidValue,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := MemcpyDtoD(tc.driver, 0xAAAA, 0xBBBB, 64)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Errorf("unexpected err: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestMemcpyDtoDAsync(t *testing.T) {
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		wantErr error
+	}{
+		{"nil driver", nil, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuMemcpyDtoDAsync: func(dst, src cudasys.CUdeviceptr, bytes uint64, stream cudasys.CUstream) cudasys.CUresult {
+				if stream != 0x5151 {
+					t.Errorf("stream = %#x, want 0x5151", stream)
+				}
+				return cudasys.CUDA_SUCCESS
+			}},
+			nil,
+		},
+		{
+			"invalid value",
+			&cudasys.Driver{CuMemcpyDtoDAsync: func(cudasys.CUdeviceptr, cudasys.CUdeviceptr, uint64, cudasys.CUstream) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}},
+			ErrInvalidValue,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := MemcpyDtoDAsync(tc.driver, 0xAAAA, 0xBBBB, 64, 0x5151)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Errorf("unexpected err: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestMemsetD8(t *testing.T) {
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		wantErr error
+	}{
+		{"nil driver", nil, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuMemsetD8: func(dst cudasys.CUdeviceptr, value uint8, count uint64) cudasys.CUresult {
+				if dst != 0xAAAA || value != 0x7 || count != 32 {
+					t.Errorf("got dst=%#x value=%d count=%d", dst, value, count)
+				}
+				return cudasys.CUDA_SUCCESS
+			}},
+			nil,
+		},
+		{
+			"invalid value",
+			&cudasys.Driver{CuMemsetD8: func(cudasys.CUdeviceptr, uint8, uint64) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}},
+			ErrInvalidValue,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := MemsetD8(tc.driver, 0xAAAA, 0x7, 32)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Errorf("unexpected err: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestMemsetD32(t *testing.T) {
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		wantErr error
+	}{
+		{"nil driver", nil, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuMemsetD32: func(dst cudasys.CUdeviceptr, value uint32, count uint64) cudasys.CUresult {
+				if value != 0xDEADBEEF || count != 8 {
+					t.Errorf("got value=%#x count=%d", value, count)
+				}
+				return cudasys.CUDA_SUCCESS
+			}},
+			nil,
+		},
+		{
+			"invalid value",
+			&cudasys.Driver{CuMemsetD32: func(cudasys.CUdeviceptr, uint32, uint64) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}},
+			ErrInvalidValue,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := MemsetD32(tc.driver, 0xAAAA, 0xDEADBEEF, 8)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Errorf("unexpected err: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestMemsetD8Async(t *testing.T) {
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		wantErr error
+	}{
+		{"nil driver", nil, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuMemsetD8Async: func(_ cudasys.CUdeviceptr, _ uint8, _ uint64, stream cudasys.CUstream) cudasys.CUresult {
+				if stream != 0x5151 {
+					t.Errorf("stream = %#x, want 0x5151", stream)
+				}
+				return cudasys.CUDA_SUCCESS
+			}},
+			nil,
+		},
+		{
+			"invalid value",
+			&cudasys.Driver{CuMemsetD8Async: func(cudasys.CUdeviceptr, uint8, uint64, cudasys.CUstream) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}},
+			ErrInvalidValue,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := MemsetD8Async(tc.driver, 0xAAAA, 0x7, 32, 0x5151)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Errorf("unexpected err: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestMemsetD32Async(t *testing.T) {
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		wantErr error
+	}{
+		{"nil driver", nil, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuMemsetD32Async: func(_ cudasys.CUdeviceptr, value uint32, _ uint64, stream cudasys.CUstream) cudasys.CUresult {
+				if value != 0xDEADBEEF || stream != 0x5151 {
+					t.Errorf("got value=%#x stream=%#x", value, stream)
+				}
+				return cudasys.CUDA_SUCCESS
+			}},
+			nil,
+		},
+		{
+			"invalid value",
+			&cudasys.Driver{CuMemsetD32Async: func(cudasys.CUdeviceptr, uint32, uint64, cudasys.CUstream) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}},
+			ErrInvalidValue,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := MemsetD32Async(tc.driver, 0xAAAA, 0xDEADBEEF, 8, 0x5151)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Errorf("unexpected err: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}

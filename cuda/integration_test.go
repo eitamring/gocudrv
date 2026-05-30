@@ -333,6 +333,83 @@ func TestRealEventStreamWait(t *testing.T) {
 	t.Logf("event-ordered async round-trip %d float32 (%d bytes), elapsed %v", n, n*4, elapsed)
 }
 
+func TestRealMemoryPrimitives(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+
+	free, total, err := ctx.MemInfo()
+	if err != nil {
+		t.Fatalf("MemInfo: %v", err)
+	}
+	if total == 0 || free == 0 || free > total {
+		t.Fatalf("MemInfo returned implausible values: free=%d total=%d", free, total)
+	}
+
+	const n = 1024
+	src, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc src: %v", err)
+	}
+	t.Cleanup(func() { _ = src.Close() })
+	dst, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc dst: %v", err)
+	}
+	t.Cleanup(func() { _ = dst.Close() })
+	host, err := AllocHost[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("AllocHost: %v", err)
+	}
+	t.Cleanup(func() { _ = host.Close() })
+
+	bg := context.Background()
+	if err := src.Zero(bg); err != nil {
+		t.Fatalf("Zero: %v", err)
+	}
+	if err := src.CopyToHost(bg, host); err != nil {
+		t.Fatalf("CopyToHost after Zero: %v", err)
+	}
+	for i, v := range host.Slice() {
+		if v != 0 {
+			t.Fatalf("Zero left nonzero at %d: %v", i, v)
+		}
+	}
+
+	feed := host.Slice()
+	for i := range feed {
+		feed[i] = float32(i) + 1
+	}
+	if err := src.CopyFromHost(bg, host); err != nil {
+		t.Fatalf("CopyFromHost: %v", err)
+	}
+	if err := src.CopyToDevice(bg, dst); err != nil {
+		t.Fatalf("CopyToDevice: %v", err)
+	}
+	readback, err := AllocHost[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("AllocHost readback: %v", err)
+	}
+	t.Cleanup(func() { _ = readback.Close() })
+	if err := dst.CopyToHost(bg, readback); err != nil {
+		t.Fatalf("CopyToHost from dst: %v", err)
+	}
+	got := readback.Slice()
+	for i := range got {
+		if got[i] != float32(i)+1 {
+			t.Fatalf("device-to-device mismatch at %d: got %v want %v", i, got[i], float32(i)+1)
+		}
+	}
+	t.Logf("primitives ok: free=%d total=%d, zeroed and DtoD-copied %d float32", free, total, n)
+}
+
 func TestRealModuleLoad(t *testing.T) {
 	initOrSkip(t)
 	dev, err := GetDevice(0)
