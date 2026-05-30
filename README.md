@@ -5,7 +5,8 @@ loaded dynamically at runtime.
 
 Status: very early. The current API covers initialization, device discovery,
 primary contexts, memory, module loading, kernel launch, explicit streams,
-events, and async pinned copies.
+events, async pinned copies, and device memory primitives (memset,
+device-to-device copy, free/total query).
 
 ## What it is
 
@@ -16,6 +17,8 @@ A thin Go wrapper around `libcuda.so.1` / `nvcuda.dll` so a Go program can:
 - create primary contexts
 - allocate device memory
 - copy memory
+- zero buffers and copy device-to-device
+- query free and total device memory
 - load precompiled PTX
 - launch kernels
 - create and synchronize streams
@@ -109,7 +112,10 @@ scripts/       build and check helpers
 7. streams
 8. async host/device copies
 9. events and stream waits
-10. basic benchmarking
+10. device memory primitives: memset, device-to-device copy, free/total query
+11. occupancy helpers and device global access
+12. basic benchmarking: bandwidth, launch latency, overlap, memset throughput
+13. CUDA graphs and stream-ordered async allocation
 
 ## License
 

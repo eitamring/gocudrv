@@ -99,6 +99,9 @@ if err := ctx.Synchronize(context.Background()); err != nil {
 - `(*Context).Synchronize(ctx context.Context) error` blocks until all
   preceding GPU work finishes or `ctx` is canceled. Canceling stops the
   wait; the GPU work continues regardless.
+- `(*Context).MemInfo() (free, total uint64, err error)` returns the free and
+  total device memory in bytes. The values reflect the whole device, not just
+  this context.
 - `(*Context).Close() error` releases the primary-context retain and stops
   the executor. Idempotent; subsequent calls return the first call's error.
   Methods called after `Close` return `ErrContextClosed`.
@@ -166,6 +169,19 @@ if err := buf.CopyTo(bg, dst); err != nil {
   enqueues a pinned host-to-device copy on `stream`.
 - `(*Buffer[T]).CopyToHostAsync(ctx context.Context, stream *Stream, dst *HostBuffer[T]) error`
   enqueues a device-to-pinned-host copy on `stream`.
+- `(*Buffer[T]).Zero(ctx context.Context) error` sets every byte of the buffer
+  to zero and blocks until the memset completes.
+- `(*Buffer[T]).ZeroAsync(ctx context.Context, stream *Stream) error` enqueues
+  the clear on `stream` and returns once CUDA accepts the work.
+- `(*Buffer[T]).CopyToDevice(ctx context.Context, dst *Buffer[T]) error` copies
+  to another device buffer of equal length in the same context. Blocks until
+  done.
+- `(*Buffer[T]).CopyToDeviceAsync(ctx context.Context, stream *Stream, dst *Buffer[T]) error`
+  enqueues a device-to-device copy on `stream`.
+
+The async memset and device-to-device copy follow the same lifetime rule as the
+async host copies: do not close the buffers or the stream until
+`Stream.Synchronize` confirms the work is done.
 
 Two free-function wrappers exist for callers who prefer the CUDA-style
 naming:
