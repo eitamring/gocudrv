@@ -26,6 +26,7 @@ type memCalls struct {
 	lastPtr     atomic.Uintptr
 	lastSize    atomic.Uint64
 	lastStream  atomic.Uintptr
+	lastVal     atomic.Uint64
 }
 
 func fakeMemoryDriver(c *memCalls, basePtr uint64) *cudasys.Driver {
@@ -79,14 +80,42 @@ func fakeMemoryDriver(c *memCalls, basePtr uint64) *cudasys.Driver {
 			c.lastStream.Store(uintptr(stream))
 			return cudasys.CUDA_SUCCESS
 		},
-		CuMemsetD8: func(_ cudasys.CUdeviceptr, _ uint8, n uint64) cudasys.CUresult {
+		CuMemsetD8: func(_ cudasys.CUdeviceptr, value uint8, n uint64) cudasys.CUresult {
 			c.memset.Add(1)
 			c.lastSize.Store(n)
+			c.lastVal.Store(uint64(value))
 			return cudasys.CUDA_SUCCESS
 		},
-		CuMemsetD8Async: func(_ cudasys.CUdeviceptr, _ uint8, n uint64, stream cudasys.CUstream) cudasys.CUresult {
+		CuMemsetD16: func(_ cudasys.CUdeviceptr, value uint16, n uint64) cudasys.CUresult {
+			c.memset.Add(1)
+			c.lastSize.Store(n)
+			c.lastVal.Store(uint64(value))
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemsetD32: func(_ cudasys.CUdeviceptr, value uint32, n uint64) cudasys.CUresult {
+			c.memset.Add(1)
+			c.lastSize.Store(n)
+			c.lastVal.Store(uint64(value))
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemsetD8Async: func(_ cudasys.CUdeviceptr, value uint8, n uint64, stream cudasys.CUstream) cudasys.CUresult {
 			c.memsetAsync.Add(1)
 			c.lastSize.Store(n)
+			c.lastVal.Store(uint64(value))
+			c.lastStream.Store(uintptr(stream))
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemsetD16Async: func(_ cudasys.CUdeviceptr, value uint16, n uint64, stream cudasys.CUstream) cudasys.CUresult {
+			c.memsetAsync.Add(1)
+			c.lastSize.Store(n)
+			c.lastVal.Store(uint64(value))
+			c.lastStream.Store(uintptr(stream))
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemsetD32Async: func(_ cudasys.CUdeviceptr, value uint32, n uint64, stream cudasys.CUstream) cudasys.CUresult {
+			c.memsetAsync.Add(1)
+			c.lastSize.Store(n)
+			c.lastVal.Store(uint64(value))
 			c.lastStream.Store(uintptr(stream))
 			return cudasys.CUDA_SUCCESS
 		},
