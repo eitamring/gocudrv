@@ -30,6 +30,7 @@ var (
 	ErrInvalidLaunchConfig   = errors.New("cuda: invalid launch config")
 	ErrNilKernelArg          = errors.New("cuda: nil kernel argument")
 	ErrContextMismatch       = errors.New("cuda: resource belongs to a different context")
+	ErrUnsupportedFillType   = errors.New("cuda: Fill is unsupported for 8-byte element types")
 )
 
 // Error is the typed error returned for non-success CUDA result codes.

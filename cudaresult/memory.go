@@ -96,6 +96,15 @@ func MemsetD8(d *cudasys.Driver, dst cudasys.CUdeviceptr, value uint8, count uin
 	return check("cuMemsetD8_v2", d.CuMemsetD8(dst, value, count))
 }
 
+// MemsetD16 sets count 16-bit words at dst to value and blocks until it
+// finishes.
+func MemsetD16(d *cudasys.Driver, dst cudasys.CUdeviceptr, value uint16, count uint64) error {
+	if d == nil || d.CuMemsetD16 == nil {
+		return ErrNotInitialized
+	}
+	return check("cuMemsetD16_v2", d.CuMemsetD16(dst, value, count))
+}
+
 // MemsetD32 sets count 32-bit words at dst to value and blocks until it
 // finishes.
 func MemsetD32(d *cudasys.Driver, dst cudasys.CUdeviceptr, value uint32, count uint64) error {
@@ -112,6 +121,15 @@ func MemsetD8Async(d *cudasys.Driver, dst cudasys.CUdeviceptr, value uint8, coun
 		return ErrNotInitialized
 	}
 	return check("cuMemsetD8Async", d.CuMemsetD8Async(dst, value, count, stream))
+}
+
+// MemsetD16Async enqueues a 16-bit-word memset on stream and returns after the
+// driver accepts the work.
+func MemsetD16Async(d *cudasys.Driver, dst cudasys.CUdeviceptr, value uint16, count uint64, stream cudasys.CUstream) error {
+	if d == nil || d.CuMemsetD16Async == nil {
+		return ErrNotInitialized
+	}
+	return check("cuMemsetD16Async", d.CuMemsetD16Async(dst, value, count, stream))
 }
 
 // MemsetD32Async enqueues a 32-bit-word memset on stream and returns after the

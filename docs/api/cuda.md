@@ -173,6 +173,14 @@ if err := buf.CopyTo(bg, dst); err != nil {
   to zero and blocks until the memset completes.
 - `(*Buffer[T]).ZeroAsync(ctx context.Context, stream *Stream) error` enqueues
   the clear on `stream` and returns once CUDA accepts the work.
+- `(*Buffer[T]).Fill(ctx context.Context, v T) error` sets every element to `v`
+  using the device memset whose width matches the element size, so it needs no
+  host allocation or copy. Blocks until done. The CUDA driver has no 64-bit
+  memset, so Fill returns `ErrUnsupportedFillType` for 8-byte element types
+  (`int64`, `uint64`, `float64`).
+- `(*Buffer[T]).FillAsync(ctx context.Context, stream *Stream, v T) error`
+  enqueues the fill on `stream` and returns once CUDA accepts the work. Same
+  8-byte restriction as Fill.
 - `(*Buffer[T]).CopyToDevice(ctx context.Context, dst *Buffer[T]) error` copies
   to another device buffer of equal length in the same context. Blocks until
   done.

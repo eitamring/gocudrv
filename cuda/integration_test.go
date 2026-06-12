@@ -383,6 +383,28 @@ func TestRealMemoryPrimitives(t *testing.T) {
 		}
 	}
 
+	const fillVal = float32(3.5)
+	if err := src.Fill(bg, fillVal); err != nil {
+		t.Fatalf("Fill: %v", err)
+	}
+	if err := src.CopyToHost(bg, host); err != nil {
+		t.Fatalf("CopyToHost after Fill: %v", err)
+	}
+	for i, v := range host.Slice() {
+		if v != fillVal {
+			t.Fatalf("Fill wrote %v at %d, want %v", v, i, fillVal)
+		}
+	}
+
+	wide, err := Alloc[float64](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc wide: %v", err)
+	}
+	t.Cleanup(func() { _ = wide.Close() })
+	if err := wide.Fill(bg, 1); !errors.Is(err, ErrUnsupportedFillType) {
+		t.Fatalf("Fill on float64 = %v, want ErrUnsupportedFillType", err)
+	}
+
 	feed := host.Slice()
 	for i := range feed {
 		feed[i] = float32(i) + 1

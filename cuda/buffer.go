@@ -337,6 +337,79 @@ func (b *Buffer[T]) ZeroAsync(ctx context.Context, stream *Stream) error {
 	})
 }
 
+// Fill sets every element of the buffer to v using the device memset
+// primitive whose width matches the element size, so it needs no host
+// allocation or copy. Blocks until the memset completes. Cancellation
+// semantics match CopyFrom.
+//
+// The CUDA driver has no 64-bit memset, so Fill returns ErrUnsupportedFillType
+// for 8-byte element types (int64, uint64, float64); fill those with a kernel.
+func (b *Buffer[T]) Fill(ctx context.Context, v T) error {
+	if b == nil {
+		return ErrNilBuffer
+	}
+	if unsafe.Sizeof(v) == 8 {
+		return ErrUnsupportedFillType
+	}
+	b.opMu.RLock()
+	defer b.opMu.RUnlock()
+	if b.closed {
+		return ErrBufferClosed
+	}
+	count := uint64(b.length)
+	return b.ctx.doWait(ctx, func() error {
+		switch unsafe.Sizeof(v) {
+		case 1:
+			return cudaresult.MemsetD8(b.ctx.driver, b.ptr, *(*uint8)(unsafe.Pointer(&v)), count)
+		case 2:
+			return cudaresult.MemsetD16(b.ctx.driver, b.ptr, *(*uint16)(unsafe.Pointer(&v)), count)
+		default:
+			return cudaresult.MemsetD32(b.ctx.driver, b.ptr, *(*uint32)(unsafe.Pointer(&v)), count)
+		}
+	})
+}
+
+// FillAsync enqueues a memset that sets every element of the buffer to v on
+// stream. It returns after CUDA accepts the work, not after the memset
+// finishes. The caller must not close b or stream until stream.Synchronize
+// confirms the memset is done. Like Fill, it returns ErrUnsupportedFillType for
+// 8-byte element types.
+func (b *Buffer[T]) FillAsync(ctx context.Context, stream *Stream, v T) error {
+	if b == nil {
+		return ErrNilBuffer
+	}
+	if stream == nil {
+		return ErrNilStream
+	}
+	if unsafe.Sizeof(v) == 8 {
+		return ErrUnsupportedFillType
+	}
+	stream.opMu.RLock()
+	defer stream.opMu.RUnlock()
+	if stream.closed {
+		return ErrStreamClosed
+	}
+	b.opMu.RLock()
+	defer b.opMu.RUnlock()
+	if b.closed {
+		return ErrBufferClosed
+	}
+	if stream.ctx != b.ctx {
+		return ErrContextMismatch
+	}
+	count := uint64(b.length)
+	return b.ctx.doWait(ctx, func() error {
+		switch unsafe.Sizeof(v) {
+		case 1:
+			return cudaresult.MemsetD8Async(b.ctx.driver, b.ptr, *(*uint8)(unsafe.Pointer(&v)), count, stream.raw)
+		case 2:
+			return cudaresult.MemsetD16Async(b.ctx.driver, b.ptr, *(*uint16)(unsafe.Pointer(&v)), count, stream.raw)
+		default:
+			return cudaresult.MemsetD32Async(b.ctx.driver, b.ptr, *(*uint32)(unsafe.Pointer(&v)), count, stream.raw)
+		}
+	})
+}
+
 // CopyToDevice copies b.Len() elements from this buffer into another device
 // buffer in the same context. Blocks until the copy completes. Cancellation
 // semantics match CopyFrom.
