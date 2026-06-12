@@ -617,6 +617,90 @@ func TestMemsetD8(t *testing.T) {
 	}
 }
 
+func TestMemsetD16(t *testing.T) {
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		wantErr error
+	}{
+		{"nil driver", nil, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuMemsetD16: func(dst cudasys.CUdeviceptr, value uint16, count uint64) cudasys.CUresult {
+				if value != 0xBEEF || count != 16 {
+					t.Errorf("got value=%#x count=%d", value, count)
+				}
+				return cudasys.CUDA_SUCCESS
+			}},
+			nil,
+		},
+		{
+			"invalid value",
+			&cudasys.Driver{CuMemsetD16: func(cudasys.CUdeviceptr, uint16, uint64) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}},
+			ErrInvalidValue,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := MemsetD16(tc.driver, 0xAAAA, 0xBEEF, 16)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Errorf("unexpected err: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestMemsetD16Async(t *testing.T) {
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		wantErr error
+	}{
+		{"nil driver", nil, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuMemsetD16Async: func(_ cudasys.CUdeviceptr, value uint16, _ uint64, stream cudasys.CUstream) cudasys.CUresult {
+				if value != 0xBEEF || stream != 0x5151 {
+					t.Errorf("got value=%#x stream=%#x", value, stream)
+				}
+				return cudasys.CUDA_SUCCESS
+			}},
+			nil,
+		},
+		{
+			"invalid value",
+			&cudasys.Driver{CuMemsetD16Async: func(cudasys.CUdeviceptr, uint16, uint64, cudasys.CUstream) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}},
+			ErrInvalidValue,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := MemsetD16Async(tc.driver, 0xAAAA, 0xBEEF, 16, 0x5151)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Errorf("unexpected err: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestMemsetD32(t *testing.T) {
 	cases := []struct {
 		name    string

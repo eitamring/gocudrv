@@ -64,8 +64,10 @@ type Driver struct {
     CuMemcpyDtoHAsync         func(dst *byte, src CUdeviceptr, byteCount uint64, stream CUstream) CUresult
     CuMemcpyDtoDAsync         func(dst CUdeviceptr, src CUdeviceptr, byteCount uint64, stream CUstream) CUresult
     CuMemsetD8                func(dst CUdeviceptr, value uint8, count uint64) CUresult
+    CuMemsetD16               func(dst CUdeviceptr, value uint16, count uint64) CUresult
     CuMemsetD32               func(dst CUdeviceptr, value uint32, count uint64) CUresult
     CuMemsetD8Async           func(dst CUdeviceptr, value uint8, count uint64, stream CUstream) CUresult
+    CuMemsetD16Async          func(dst CUdeviceptr, value uint16, count uint64, stream CUstream) CUresult
     CuMemsetD32Async          func(dst CUdeviceptr, value uint32, count uint64, stream CUstream) CUresult
     CuMemAllocHost            func(pp **byte, bytesize uint64) CUresult
     CuMemFreeHost             func(p *byte) CUresult
@@ -112,8 +114,10 @@ type Driver struct {
 - `cuMemcpyDtoHAsync_v2`
 - `cuMemcpyDtoDAsync_v2`
 - `cuMemsetD8_v2`
+- `cuMemsetD16_v2`
 - `cuMemsetD32_v2`
 - `cuMemsetD8Async`
+- `cuMemsetD16Async`
 - `cuMemsetD32Async`
 - `cuMemAllocHost_v2`
 - `cuMemFreeHost`
