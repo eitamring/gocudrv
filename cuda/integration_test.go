@@ -663,3 +663,52 @@ func TestRealDeviceEnum(t *testing.T) {
 			i, name, maj, min, mem/(1<<20), sm)
 	}
 }
+
+func TestRealOccupancy(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+
+	mod, err := ctx.LoadModuleFromFile("testdata/vector_add.ptx")
+	if err != nil {
+		t.Fatalf("LoadModuleFromFile: %v", err)
+	}
+	t.Cleanup(func() { _ = mod.Close() })
+	fn, err := mod.Function("vector_add")
+	if err != nil {
+		t.Fatalf("Function: %v", err)
+	}
+
+	blocks, err := fn.MaxActiveBlocksPerSM(256, 0)
+	if err != nil {
+		t.Fatalf("MaxActiveBlocksPerSM: %v", err)
+	}
+	if blocks <= 0 {
+		t.Fatalf("MaxActiveBlocksPerSM = %d, want positive", blocks)
+	}
+
+	minGrid, blockSize, err := fn.SuggestedBlockSize(0, 0)
+	if err != nil {
+		t.Fatalf("SuggestedBlockSize: %v", err)
+	}
+	if blockSize <= 0 || minGrid <= 0 {
+		t.Fatalf("SuggestedBlockSize = (minGrid %d, block %d), want both positive", minGrid, blockSize)
+	}
+
+	cfg, err := fn.SuggestedConfig1D(1<<20, 0)
+	if err != nil {
+		t.Fatalf("SuggestedConfig1D: %v", err)
+	}
+	if cfg.BlockX == 0 || cfg.GridX == 0 {
+		t.Fatalf("SuggestedConfig1D produced empty config: %+v", cfg)
+	}
+	t.Logf("occupancy ok: %d blocks/SM at 256, suggested block %d (min grid %d), 1M config %dx%d",
+		blocks, blockSize, minGrid, cfg.GridX, cfg.BlockX)
+}
