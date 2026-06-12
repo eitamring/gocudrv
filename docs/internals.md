@@ -89,6 +89,12 @@ type Driver struct {
     CuLaunchKernel            func(fn CUfunction, ..., kernelParams *unsafe.Pointer, extra *unsafe.Pointer) CUresult
     CuOccupancyMaxActiveBlocksPerMultiprocessor func(numBlocks *int32, fn CUfunction, blockSize int32, dynamicSMemSize uint64) CUresult
     CuOccupancyMaxPotentialBlockSize            func(minGridSize *int32, blockSize *int32, fn CUfunction, b2dSize uintptr, dynamicSMemSize uint64, blockSizeLimit int32) CUresult
+    CuStreamBeginCapture func(stream CUstream, mode uint32) CUresult
+    CuStreamEndCapture   func(stream CUstream, graph *CUgraph) CUresult
+    CuGraphInstantiate   func(execGraph *CUgraphExec, graph CUgraph, flags uint64) CUresult
+    CuGraphLaunch        func(execGraph CUgraphExec, stream CUstream) CUresult
+    CuGraphDestroy       func(graph CUgraph) CUresult
+    CuGraphExecDestroy   func(execGraph CUgraphExec) CUresult
 }
 ```
 
@@ -142,6 +148,12 @@ type Driver struct {
 - `cuLaunchKernel`
 - `cuOccupancyMaxActiveBlocksPerMultiprocessor`
 - `cuOccupancyMaxPotentialBlockSize`
+- `cuStreamBeginCapture_v2`
+- `cuStreamEndCapture`
+- `cuGraphInstantiateWithFlags`
+- `cuGraphLaunch`
+- `cuGraphDestroy`
+- `cuGraphExecDestroy`
 
 If any bind fails, `Load` closes the library before returning. On successful
 initialization, the package-global `cuda` driver keeps the handle alive.

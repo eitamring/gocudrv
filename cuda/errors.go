@@ -35,6 +35,10 @@ var (
 	ErrNilGlobal             = errors.New("cuda: nil global")
 	ErrEmptyGlobalName       = errors.New("cuda: empty global name")
 	ErrInvalidGlobalName     = errors.New("cuda: global name contains null byte")
+	ErrNilGraph              = errors.New("cuda: nil graph")
+	ErrGraphClosed           = errors.New("cuda: graph is closed")
+	ErrNilGraphExec          = errors.New("cuda: nil executable graph")
+	ErrGraphExecClosed       = errors.New("cuda: executable graph is closed")
 )
 
 // Error is the typed error returned for non-success CUDA result codes.
