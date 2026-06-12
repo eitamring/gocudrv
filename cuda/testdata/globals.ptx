@@ -1,0 +1,22 @@
+//
+// Minimal PTX fixture for the device-global integration test. It declares a
+// visible __device__ global array and a trivial kernel that references it so
+// the symbol is retained. Looked up from Go with Module.Global("g_counter").
+//
+.version 7.0
+.target sm_50
+.address_size 64
+
+.visible .global .align 4 .u32 g_counter[4];
+
+.visible .entry touch_counter()
+{
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<2>;
+
+	mov.u64 	%rd1, g_counter;
+	ld.global.u32 	%r1, [%rd1];
+	add.s32 	%r2, %r1, 1;
+	st.global.u32 	[%rd1], %r2;
+	ret;
+}

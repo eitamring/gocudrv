@@ -35,3 +35,18 @@ func ModuleGetFunction(d *cudasys.Driver, mod cudasys.CUmodule, name *byte) (cud
 	}
 	return fn, nil
 }
+
+// ModuleGetGlobal looks up a __device__ or __constant__ global by
+// null-terminated name in a loaded module and returns its device pointer and
+// byte size.
+func ModuleGetGlobal(d *cudasys.Driver, mod cudasys.CUmodule, name *byte) (cudasys.CUdeviceptr, uint64, error) {
+	if d == nil || d.CuModuleGetGlobal == nil {
+		return 0, 0, ErrNotInitialized
+	}
+	var ptr cudasys.CUdeviceptr
+	var bytes uint64
+	if err := check("cuModuleGetGlobal_v2", d.CuModuleGetGlobal(&ptr, &bytes, mod, name)); err != nil {
+		return 0, 0, err
+	}
+	return ptr, bytes, nil
+}

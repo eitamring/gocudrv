@@ -712,3 +712,46 @@ func TestRealOccupancy(t *testing.T) {
 	t.Logf("occupancy ok: %d blocks/SM at 256, suggested block %d (min grid %d), 1M config %dx%d",
 		blocks, blockSize, minGrid, cfg.GridX, cfg.BlockX)
 }
+
+func TestRealDeviceGlobal(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+
+	mod, err := ctx.LoadModuleFromFile("testdata/globals.ptx")
+	if err != nil {
+		t.Fatalf("LoadModuleFromFile: %v", err)
+	}
+	t.Cleanup(func() { _ = mod.Close() })
+
+	g, err := mod.Global("g_counter")
+	if err != nil {
+		t.Fatalf("Global: %v", err)
+	}
+	if g.Bytes() != 16 {
+		t.Fatalf("Bytes = %d, want 16 (4 uint32)", g.Bytes())
+	}
+
+	bg := context.Background()
+	want := []uint32{11, 22, 33, 44}
+	if err := WriteGlobal(bg, g, want); err != nil {
+		t.Fatalf("WriteGlobal: %v", err)
+	}
+	got := make([]uint32, 4)
+	if err := ReadGlobal(bg, got, g); err != nil {
+		t.Fatalf("ReadGlobal: %v", err)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("global round trip mismatch at %d: got %d want %d", i, got[i], want[i])
+		}
+	}
+	t.Logf("device global ok: g_counter (%d bytes) round-tripped %v", g.Bytes(), got)
+}
