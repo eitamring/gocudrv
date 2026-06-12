@@ -59,6 +59,9 @@ type Driver struct {
 	CuEventSynchronize          func(event CUevent) CUresult
 	CuEventElapsedTime          func(ms *float32, start CUevent, end CUevent) CUresult
 	CuLaunchKernel              func(fn CUfunction, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemBytes uint32, stream CUstream, kernelParams *unsafe.Pointer, extra *unsafe.Pointer) CUresult
+
+	CuOccupancyMaxActiveBlocksPerMultiprocessor func(numBlocks *int32, fn CUfunction, blockSize int32, dynamicSMemSize uint64) CUresult
+	CuOccupancyMaxPotentialBlockSize            func(minGridSize *int32, blockSize *int32, fn CUfunction, blockSizeToDynamicSMemSize uintptr, dynamicSMemSize uint64, blockSizeLimit int32) CUresult
 }
 
 // bindFn is the symbol-binding function used by Load. Overridable in tests.
@@ -118,6 +121,8 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuEventSynchronize, "cuEventSynchronize"},
 		{&d.CuEventElapsedTime, "cuEventElapsedTime"},
 		{&d.CuLaunchKernel, "cuLaunchKernel"},
+		{&d.CuOccupancyMaxActiveBlocksPerMultiprocessor, "cuOccupancyMaxActiveBlocksPerMultiprocessor"},
+		{&d.CuOccupancyMaxPotentialBlockSize, "cuOccupancyMaxPotentialBlockSize"},
 	}
 	for _, b := range binds {
 		if err := bindFn(lib, b.fn, b.name); err != nil {
