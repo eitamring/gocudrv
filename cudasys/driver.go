@@ -47,6 +47,7 @@ type Driver struct {
 	CuModuleLoadData            func(module *CUmodule, image *byte) CUresult
 	CuModuleUnload              func(module CUmodule) CUresult
 	CuModuleGetFunction         func(fn *CUfunction, module CUmodule, name *byte) CUresult
+	CuModuleGetGlobal           func(dptr *CUdeviceptr, bytes *uint64, module CUmodule, name *byte) CUresult
 	CuStreamCreate              func(stream *CUstream, flags uint32) CUresult
 	CuStreamCreateWithPriority  func(stream *CUstream, flags uint32, priority int32) CUresult
 	CuStreamDestroy             func(stream CUstream) CUresult
@@ -109,6 +110,7 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuModuleLoadData, "cuModuleLoadData"},
 		{&d.CuModuleUnload, "cuModuleUnload"},
 		{&d.CuModuleGetFunction, "cuModuleGetFunction"},
+		{&d.CuModuleGetGlobal, "cuModuleGetGlobal_v2"},
 		{&d.CuStreamCreate, "cuStreamCreate"},
 		{&d.CuStreamCreateWithPriority, "cuStreamCreateWithPriority"},
 		{&d.CuStreamDestroy, "cuStreamDestroy_v2"},

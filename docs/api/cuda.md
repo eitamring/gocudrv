@@ -541,6 +541,30 @@ cfg, err := fn.SuggestedConfig1D(n, 0) // occupancy-picked block size for n elem
   folds `SuggestedBlockSize` and `LaunchConfig1D` into one call: a ready 1D config
   covering `n` elements at the occupancy-maximizing block size.
 
+## device globals
+
+`Module.Global` looks up a `__device__` or `__constant__` variable in a loaded
+module so the host can read and write it directly.
+
+```go
+g, err := mod.Global("g_counter")
+cuda.WriteGlobal(ctx, g, []uint32{1, 2, 3, 4})
+out := make([]uint32, 4)
+cuda.ReadGlobal(ctx, out, g)
+```
+
+- `(*Module).Global(name string) (*Global, error)` resolves the symbol via
+  `cuModuleGetGlobal` and returns a handle carrying its device pointer and size.
+- `(*Global).Bytes() uint64` is the size of the global; `(*Global).Name() string`
+  is the symbol name.
+- `WriteGlobal[T](ctx, g, vals)` and `ReadGlobal[T](ctx, dst, g)` copy between a
+  host slice and the global using `cuMemcpyHtoD` / `cuMemcpyDtoH`. The byte size
+  of the slice must be greater than zero and must not exceed `g.Bytes()`, else
+  `ErrLengthMismatch`.
+
+A `Global` is tied to its `Module`: once `Module.Close` succeeds the handle is
+invalid.
+
 ## errors
 
 `cuda.Error` is an alias for `cudaresult.Error`. It carries the raw CUDA result

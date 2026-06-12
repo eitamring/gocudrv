@@ -74,6 +74,7 @@ type Driver struct {
     CuModuleLoadData          func(module *CUmodule, image *byte) CUresult
     CuModuleUnload            func(module CUmodule) CUresult
     CuModuleGetFunction       func(fn *CUfunction, module CUmodule, name *byte) CUresult
+    CuModuleGetGlobal         func(dptr *CUdeviceptr, bytes *uint64, module CUmodule, name *byte) CUresult
     CuStreamCreate            func(stream *CUstream, flags uint32) CUresult
     CuStreamCreateWithPriority func(stream *CUstream, flags uint32, priority int32) CUresult
     CuStreamDestroy           func(stream CUstream) CUresult
@@ -126,6 +127,7 @@ type Driver struct {
 - `cuModuleLoadData`
 - `cuModuleUnload`
 - `cuModuleGetFunction`
+- `cuModuleGetGlobal_v2`
 - `cuStreamCreate`
 - `cuStreamCreateWithPriority`
 - `cuStreamDestroy_v2`

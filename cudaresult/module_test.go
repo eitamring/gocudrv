@@ -171,3 +171,54 @@ func TestModuleGetFunction(t *testing.T) {
 		})
 	}
 }
+
+func TestModuleGetGlobal(t *testing.T) {
+	name := []byte{'g', 0}
+
+	cases := []struct {
+		name      string
+		driver    *cudasys.Driver
+		wantPtr   cudasys.CUdeviceptr
+		wantBytes uint64
+		wantErr   error
+	}{
+		{"nil driver", nil, 0, 0, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, 0, 0, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuModuleGetGlobal: func(dptr *cudasys.CUdeviceptr, bytes *uint64, m cudasys.CUmodule, _ *byte) cudasys.CUresult {
+				if m != 0xBEEF {
+					t.Errorf("module = %#x, want 0xBEEF", m)
+				}
+				*dptr = 0xD0D0
+				*bytes = 32
+				return cudasys.CUDA_SUCCESS
+			}},
+			0xD0D0, 32, nil,
+		},
+		{
+			"not found",
+			&cudasys.Driver{CuModuleGetGlobal: func(*cudasys.CUdeviceptr, *uint64, cudasys.CUmodule, *byte) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_NOT_FOUND
+			}},
+			0, 0, ErrNotFound,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ptr, bytes, err := ModuleGetGlobal(tc.driver, 0xBEEF, &name[0])
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Errorf("err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if ptr != tc.wantPtr || bytes != tc.wantBytes {
+				t.Errorf("got ptr=%#x bytes=%d, want %#x %d", ptr, bytes, tc.wantPtr, tc.wantBytes)
+			}
+		})
+	}
+}
