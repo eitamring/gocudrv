@@ -518,6 +518,53 @@ locks only protect submission, not the whole kernel lifetime. Call
 `Context.Synchronize` or `Stream.Synchronize` before reading outputs or closing
 any buffer or module the kernel touched.
 
+## occupancy
+
+Occupancy is how many of a multiprocessor's warp slots a kernel can fill. These
+helpers let you size a launch by what the hardware can actually run instead of
+guessing a block size.
+
+```go
+minGrid, blockSize, err := fn.SuggestedBlockSize(0, 0)
+cfg, err := fn.SuggestedConfig1D(n, 0) // occupancy-picked block size for n elements
+```
+
+- `(*Function).MaxActiveBlocksPerSM(blockSize, dynamicSharedMem int) (int, error)`
+  returns the maximum blocks resident per multiprocessor at that block size and
+  dynamic shared memory, via `cuOccupancyMaxActiveBlocksPerMultiprocessor`.
+  `blockSize` must be positive.
+- `(*Function).SuggestedBlockSize(dynamicSharedMem, blockSizeLimit int) (minGridSize, blockSize int, err error)`
+  asks `cuOccupancyMaxPotentialBlockSize` for a block size that maximizes
+  occupancy and the minimum grid to fill the device. Pass `blockSizeLimit` 0 for
+  no cap. The dynamic-shared-memory callback is always null.
+- `(*Function).SuggestedConfig1D(n, dynamicSharedMem int) (LaunchConfig, error)`
+  folds `SuggestedBlockSize` and `LaunchConfig1D` into one call: a ready 1D config
+  covering `n` elements at the occupancy-maximizing block size.
+
+## device globals
+
+`Module.Global` looks up a `__device__` or `__constant__` variable in a loaded
+module so the host can read and write it directly.
+
+```go
+g, err := mod.Global("g_counter")
+cuda.WriteGlobal(ctx, g, []uint32{1, 2, 3, 4})
+out := make([]uint32, 4)
+cuda.ReadGlobal(ctx, out, g)
+```
+
+- `(*Module).Global(name string) (*Global, error)` resolves the symbol via
+  `cuModuleGetGlobal` and returns a handle carrying its device pointer and size.
+- `(*Global).Bytes() uint64` is the size of the global; `(*Global).Name() string`
+  is the symbol name.
+- `WriteGlobal[T](ctx, g, vals)` and `ReadGlobal[T](ctx, dst, g)` copy between a
+  host slice and the global using `cuMemcpyHtoD` / `cuMemcpyDtoH`. The byte size
+  of the slice must be greater than zero and must not exceed `g.Bytes()`, else
+  `ErrLengthMismatch`.
+
+A `Global` is tied to its `Module`: once `Module.Close` succeeds the handle is
+invalid.
+
 ## errors
 
 `cuda.Error` is an alias for `cudaresult.Error`. It carries the raw CUDA result

@@ -5,8 +5,9 @@ loaded dynamically at runtime.
 
 Status: very early. The current API covers initialization, device discovery,
 primary contexts, memory, module loading, kernel launch, explicit streams,
-events, async pinned copies, and device memory primitives (memset, typed fill,
-device-to-device copy, free/total query).
+events, async pinned copies, device memory primitives (memset, typed fill,
+device-to-device copy, free/total query), occupancy helpers, and device global
+access.
 
 ## What it is
 

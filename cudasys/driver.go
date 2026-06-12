@@ -47,6 +47,7 @@ type Driver struct {
 	CuModuleLoadData            func(module *CUmodule, image *byte) CUresult
 	CuModuleUnload              func(module CUmodule) CUresult
 	CuModuleGetFunction         func(fn *CUfunction, module CUmodule, name *byte) CUresult
+	CuModuleGetGlobal           func(dptr *CUdeviceptr, bytes *uint64, module CUmodule, name *byte) CUresult
 	CuStreamCreate              func(stream *CUstream, flags uint32) CUresult
 	CuStreamCreateWithPriority  func(stream *CUstream, flags uint32, priority int32) CUresult
 	CuStreamDestroy             func(stream CUstream) CUresult
@@ -59,6 +60,9 @@ type Driver struct {
 	CuEventSynchronize          func(event CUevent) CUresult
 	CuEventElapsedTime          func(ms *float32, start CUevent, end CUevent) CUresult
 	CuLaunchKernel              func(fn CUfunction, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemBytes uint32, stream CUstream, kernelParams *unsafe.Pointer, extra *unsafe.Pointer) CUresult
+
+	CuOccupancyMaxActiveBlocksPerMultiprocessor func(numBlocks *int32, fn CUfunction, blockSize int32, dynamicSMemSize uint64) CUresult
+	CuOccupancyMaxPotentialBlockSize            func(minGridSize *int32, blockSize *int32, fn CUfunction, blockSizeToDynamicSMemSize uintptr, dynamicSMemSize uint64, blockSizeLimit int32) CUresult
 }
 
 // bindFn is the symbol-binding function used by Load. Overridable in tests.
@@ -106,6 +110,7 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuModuleLoadData, "cuModuleLoadData"},
 		{&d.CuModuleUnload, "cuModuleUnload"},
 		{&d.CuModuleGetFunction, "cuModuleGetFunction"},
+		{&d.CuModuleGetGlobal, "cuModuleGetGlobal_v2"},
 		{&d.CuStreamCreate, "cuStreamCreate"},
 		{&d.CuStreamCreateWithPriority, "cuStreamCreateWithPriority"},
 		{&d.CuStreamDestroy, "cuStreamDestroy_v2"},
@@ -118,6 +123,8 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuEventSynchronize, "cuEventSynchronize"},
 		{&d.CuEventElapsedTime, "cuEventElapsedTime"},
 		{&d.CuLaunchKernel, "cuLaunchKernel"},
+		{&d.CuOccupancyMaxActiveBlocksPerMultiprocessor, "cuOccupancyMaxActiveBlocksPerMultiprocessor"},
+		{&d.CuOccupancyMaxPotentialBlockSize, "cuOccupancyMaxPotentialBlockSize"},
 	}
 	for _, b := range binds {
 		if err := bindFn(lib, b.fn, b.name); err != nil {

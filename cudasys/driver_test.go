@@ -56,6 +56,7 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		{"cuModuleLoadData fails", "cuModuleLoadData"},
 		{"cuModuleUnload fails", "cuModuleUnload"},
 		{"cuModuleGetFunction fails", "cuModuleGetFunction"},
+		{"cuModuleGetGlobal_v2 fails", "cuModuleGetGlobal_v2"},
 		{"cuStreamCreate fails", "cuStreamCreate"},
 		{"cuStreamCreateWithPriority fails", "cuStreamCreateWithPriority"},
 		{"cuStreamDestroy_v2 fails", "cuStreamDestroy_v2"},
@@ -68,6 +69,8 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		{"cuEventSynchronize fails", "cuEventSynchronize"},
 		{"cuEventElapsedTime fails", "cuEventElapsedTime"},
 		{"cuLaunchKernel fails", "cuLaunchKernel"},
+		{"cuOccupancyMaxActiveBlocksPerMultiprocessor fails", "cuOccupancyMaxActiveBlocksPerMultiprocessor"},
+		{"cuOccupancyMaxPotentialBlockSize fails", "cuOccupancyMaxPotentialBlockSize"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
