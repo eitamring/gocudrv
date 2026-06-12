@@ -518,6 +518,29 @@ locks only protect submission, not the whole kernel lifetime. Call
 `Context.Synchronize` or `Stream.Synchronize` before reading outputs or closing
 any buffer or module the kernel touched.
 
+## occupancy
+
+Occupancy is how many of a multiprocessor's warp slots a kernel can fill. These
+helpers let you size a launch by what the hardware can actually run instead of
+guessing a block size.
+
+```go
+minGrid, blockSize, err := fn.SuggestedBlockSize(0, 0)
+cfg, err := fn.SuggestedConfig1D(n, 0) // occupancy-picked block size for n elements
+```
+
+- `(*Function).MaxActiveBlocksPerSM(blockSize, dynamicSharedMem int) (int, error)`
+  returns the maximum blocks resident per multiprocessor at that block size and
+  dynamic shared memory, via `cuOccupancyMaxActiveBlocksPerMultiprocessor`.
+  `blockSize` must be positive.
+- `(*Function).SuggestedBlockSize(dynamicSharedMem, blockSizeLimit int) (minGridSize, blockSize int, err error)`
+  asks `cuOccupancyMaxPotentialBlockSize` for a block size that maximizes
+  occupancy and the minimum grid to fill the device. Pass `blockSizeLimit` 0 for
+  no cap. The dynamic-shared-memory callback is always null.
+- `(*Function).SuggestedConfig1D(n, dynamicSharedMem int) (LaunchConfig, error)`
+  folds `SuggestedBlockSize` and `LaunchConfig1D` into one call: a ready 1D config
+  covering `n` elements at the occupancy-maximizing block size.
+
 ## errors
 
 `cuda.Error` is an alias for `cudaresult.Error`. It carries the raw CUDA result

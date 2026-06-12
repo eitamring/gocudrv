@@ -68,6 +68,8 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		{"cuEventSynchronize fails", "cuEventSynchronize"},
 		{"cuEventElapsedTime fails", "cuEventElapsedTime"},
 		{"cuLaunchKernel fails", "cuLaunchKernel"},
+		{"cuOccupancyMaxActiveBlocksPerMultiprocessor fails", "cuOccupancyMaxActiveBlocksPerMultiprocessor"},
+		{"cuOccupancyMaxPotentialBlockSize fails", "cuOccupancyMaxPotentialBlockSize"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
