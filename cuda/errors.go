@@ -32,6 +32,9 @@ var (
 	ErrContextMismatch       = errors.New("cuda: resource belongs to a different context")
 	ErrUnsupportedFillType   = errors.New("cuda: Fill is unsupported for 8-byte element types")
 	ErrInvalidBlockSize      = errors.New("cuda: block size must be positive")
+	ErrNilGlobal             = errors.New("cuda: nil global")
+	ErrEmptyGlobalName       = errors.New("cuda: empty global name")
+	ErrInvalidGlobalName     = errors.New("cuda: global name contains null byte")
 )
 
 // Error is the typed error returned for non-success CUDA result codes.
