@@ -6,8 +6,8 @@ loaded dynamically at runtime.
 Status: very early. The current API covers initialization, device discovery,
 primary contexts, memory, module loading, kernel launch, explicit streams,
 events, async pinned copies, device memory primitives (memset, typed fill,
-device-to-device copy, free/total query), occupancy helpers, and device global
-access.
+device-to-device copy, free/total query), occupancy helpers, device global
+access, and CUDA graph capture and replay.
 
 ## What it is
 
@@ -116,7 +116,8 @@ scripts/       build and check helpers
 10. device memory primitives: memset, typed fill, device-to-device copy, free/total query
 11. occupancy helpers and device global access
 12. basic benchmarking: bandwidth, launch latency, overlap, memset throughput
-13. CUDA graphs and stream-ordered async allocation
+13. CUDA graph capture and replay
+14. stream-ordered async allocation
 
 ## License
 

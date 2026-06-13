@@ -63,6 +63,13 @@ type Driver struct {
 
 	CuOccupancyMaxActiveBlocksPerMultiprocessor func(numBlocks *int32, fn CUfunction, blockSize int32, dynamicSMemSize uint64) CUresult
 	CuOccupancyMaxPotentialBlockSize            func(minGridSize *int32, blockSize *int32, fn CUfunction, blockSizeToDynamicSMemSize uintptr, dynamicSMemSize uint64, blockSizeLimit int32) CUresult
+
+	CuStreamBeginCapture func(stream CUstream, mode uint32) CUresult
+	CuStreamEndCapture   func(stream CUstream, graph *CUgraph) CUresult
+	CuGraphInstantiate   func(execGraph *CUgraphExec, graph CUgraph, flags uint64) CUresult
+	CuGraphLaunch        func(execGraph CUgraphExec, stream CUstream) CUresult
+	CuGraphDestroy       func(graph CUgraph) CUresult
+	CuGraphExecDestroy   func(execGraph CUgraphExec) CUresult
 }
 
 // bindFn is the symbol-binding function used by Load. Overridable in tests.
@@ -125,6 +132,12 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuLaunchKernel, "cuLaunchKernel"},
 		{&d.CuOccupancyMaxActiveBlocksPerMultiprocessor, "cuOccupancyMaxActiveBlocksPerMultiprocessor"},
 		{&d.CuOccupancyMaxPotentialBlockSize, "cuOccupancyMaxPotentialBlockSize"},
+		{&d.CuStreamBeginCapture, "cuStreamBeginCapture_v2"},
+		{&d.CuStreamEndCapture, "cuStreamEndCapture"},
+		{&d.CuGraphInstantiate, "cuGraphInstantiateWithFlags"},
+		{&d.CuGraphLaunch, "cuGraphLaunch"},
+		{&d.CuGraphDestroy, "cuGraphDestroy"},
+		{&d.CuGraphExecDestroy, "cuGraphExecDestroy"},
 	}
 	for _, b := range binds {
 		if err := bindFn(lib, b.fn, b.name); err != nil {
