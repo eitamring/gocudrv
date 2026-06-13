@@ -755,3 +755,98 @@ func TestRealDeviceGlobal(t *testing.T) {
 	}
 	t.Logf("device global ok: g_counter (%d bytes) round-tripped %v", g.Bytes(), got)
 }
+
+func TestRealGraphCaptureReplay(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+	stream, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream: %v", err)
+	}
+	t.Cleanup(func() { _ = stream.Close() })
+
+	const n = 1024
+	aHost := make([]float32, n)
+	bHost := make([]float32, n)
+	for i := range aHost {
+		aHost[i] = float32(i)
+		bHost[i] = float32(i) * 2
+	}
+	a, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc a: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+	b, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc b: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	out, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc out: %v", err)
+	}
+	t.Cleanup(func() { _ = out.Close() })
+
+	bg := context.Background()
+	if err := a.CopyFrom(bg, aHost); err != nil {
+		t.Fatalf("CopyFrom a: %v", err)
+	}
+	if err := b.CopyFrom(bg, bHost); err != nil {
+		t.Fatalf("CopyFrom b: %v", err)
+	}
+
+	mod, err := ctx.LoadModuleFromFile("testdata/vector_add.ptx")
+	if err != nil {
+		t.Fatalf("LoadModuleFromFile: %v", err)
+	}
+	t.Cleanup(func() { _ = mod.Close() })
+	fn, err := mod.Function("vector_add")
+	if err != nil {
+		t.Fatalf("Function: %v", err)
+	}
+
+	// Capture a launch into a graph instead of running it.
+	if err := stream.BeginCapture(CaptureModeThreadLocal); err != nil {
+		t.Fatalf("BeginCapture: %v", err)
+	}
+	if err := fn.LaunchOn(bg, stream, LaunchConfig1D(n, 256), Arg(a), Arg(b), Arg(out), ArgValue(int32(n))); err != nil {
+		t.Fatalf("LaunchOn during capture: %v", err)
+	}
+	g, err := stream.EndCapture()
+	if err != nil {
+		t.Fatalf("EndCapture: %v", err)
+	}
+	t.Cleanup(func() { _ = g.Close() })
+	exec, err := g.Instantiate()
+	if err != nil {
+		t.Fatalf("Instantiate: %v", err)
+	}
+	t.Cleanup(func() { _ = exec.Close() })
+
+	// Replay the graph and check the result lands.
+	if err := exec.Launch(bg, stream); err != nil {
+		t.Fatalf("graph Launch: %v", err)
+	}
+	if err := stream.Synchronize(bg); err != nil {
+		t.Fatalf("Synchronize: %v", err)
+	}
+	got := make([]float32, n)
+	if err := out.CopyTo(bg, got); err != nil {
+		t.Fatalf("CopyTo out: %v", err)
+	}
+	for i := range got {
+		if want := aHost[i] + bHost[i]; got[i] != want {
+			t.Fatalf("graph replay out[%d] = %v, want %v", i, got[i], want)
+		}
+	}
+	t.Logf("graph capture/replay ok: vector_add for %d elements replayed from a graph", n)
+}

@@ -565,6 +565,43 @@ cuda.ReadGlobal(ctx, out, g)
 A `Global` is tied to its `Module`: once `Module.Close` succeeds the handle is
 invalid.
 
+## graphs
+
+A CUDA graph records a sequence of stream work once and replays it with much
+lower per-launch overhead than submitting each operation again. Capture work on
+a stream, end the capture to get a `Graph`, instantiate it into a `GraphExec`,
+then launch that executable repeatedly.
+
+```go
+stream.BeginCapture(cuda.CaptureModeThreadLocal)
+fn.LaunchOn(ctx, stream, cfg, args...) // recorded, not run
+g, err := stream.EndCapture()
+defer g.Close()
+exec, err := g.Instantiate()
+defer exec.Close()
+exec.Launch(ctx, stream) // replay, near-zero launch overhead
+stream.Synchronize(ctx)
+```
+
+- `(*Stream).BeginCapture(mode CaptureMode) error` puts the stream into capture
+  mode via `cuStreamBeginCapture`. `CaptureModeGlobal` is the default;
+  `CaptureModeThreadLocal` and `CaptureModeRelaxed` relax the cross-thread safety
+  checks.
+- `(*Stream).EndCapture() (*Graph, error)` ends capture and returns the recorded
+  graph (`cuStreamEndCapture`).
+- `(*Graph).Instantiate() (*GraphExec, error)` compiles the graph into an
+  executable (`cuGraphInstantiateWithFlags`).
+- `(*GraphExec).Launch(ctx, stream) error` enqueues the executable on `stream`
+  (`cuGraphLaunch`). It returns after the driver accepts the work, not after the
+  GPU finishes; synchronize before reading outputs.
+- `(*Graph).Close()` and `(*GraphExec).Close()` release the handles
+  (`cuGraphDestroy`, `cuGraphExecDestroy`).
+
+**Lifetime rule:** both `Graph` and `GraphExec` are owned by the `Context` and
+must be closed before it. The buffers, module, and arguments referenced by the
+captured work must stay alive and unchanged for as long as the `GraphExec` may
+be launched.
+
 ## errors
 
 `cuda.Error` is an alias for `cudaresult.Error`. It carries the raw CUDA result

@@ -12,4 +12,6 @@ type (
 	CUfunction  uintptr
 	CUdeviceptr uint64
 	CUevent     uintptr
+	CUgraph     uintptr
+	CUgraphExec uintptr
 )

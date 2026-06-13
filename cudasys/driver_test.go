@@ -71,6 +71,12 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		{"cuLaunchKernel fails", "cuLaunchKernel"},
 		{"cuOccupancyMaxActiveBlocksPerMultiprocessor fails", "cuOccupancyMaxActiveBlocksPerMultiprocessor"},
 		{"cuOccupancyMaxPotentialBlockSize fails", "cuOccupancyMaxPotentialBlockSize"},
+		{"cuStreamBeginCapture_v2 fails", "cuStreamBeginCapture_v2"},
+		{"cuStreamEndCapture fails", "cuStreamEndCapture"},
+		{"cuGraphInstantiateWithFlags fails", "cuGraphInstantiateWithFlags"},
+		{"cuGraphLaunch fails", "cuGraphLaunch"},
+		{"cuGraphDestroy fails", "cuGraphDestroy"},
+		{"cuGraphExecDestroy fails", "cuGraphExecDestroy"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
