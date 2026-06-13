@@ -75,6 +75,59 @@ func Alloc[T Supported](ctx *Context, n int) (*Buffer[T], error) {
 	}, nil
 }
 
+// AllocAsync enqueues a stream-ordered allocation of n elements of T on the
+// device tied to ctx. It returns after CUDA accepts the work, not after the
+// allocation is ready, so the memory must not be accessed until stream reaches
+// this point (for example after stream.Synchronize or a later op on the same
+// stream). Free the returned Buffer with FreeAsync on a stream, or with Close
+// once the stream work that uses it has completed. The caller must close the
+// buffer before closing ctx.
+func AllocAsync[T Supported](ctx *Context, stream *Stream, n int) (*Buffer[T], error) {
+	if ctx == nil {
+		return nil, ErrNilContext
+	}
+	if stream == nil {
+		return nil, ErrNilStream
+	}
+	if n <= 0 {
+		return nil, ErrInvalidLength
+	}
+	var zero T
+	elemSize := uint64(unsafe.Sizeof(zero))
+	if uint64(n) > math.MaxUint64/elemSize {
+		return nil, ErrInvalidLength
+	}
+	bytes := uint64(n) * elemSize
+
+	stream.opMu.RLock()
+	defer stream.opMu.RUnlock()
+	if stream.closed {
+		return nil, ErrStreamClosed
+	}
+	if stream.ctx != ctx {
+		return nil, ErrContextMismatch
+	}
+
+	var ptr cudasys.CUdeviceptr
+	err := ctx.doWait(context.Background(), func() error {
+		p, e := cudaresult.MemAllocAsync(ctx.driver, bytes, stream.raw)
+		if e != nil {
+			return e
+		}
+		ptr = p
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Buffer[T]{
+		ctx:    ctx,
+		ptr:    ptr,
+		length: n,
+		bytes:  bytes,
+	}, nil
+}
+
 // Len returns the number of elements in the buffer.
 func (b *Buffer[T]) Len() int {
 	if b == nil {
@@ -105,6 +158,42 @@ func (b *Buffer[T]) Close() error {
 	}
 	if err := b.ctx.doWait(context.Background(), func() error {
 		return cudaresult.MemFree(b.ctx.driver, b.ptr)
+	}); err != nil {
+		return err
+	}
+	b.closed = true
+	return nil
+}
+
+// FreeAsync enqueues a stream-ordered free of the buffer's device memory on
+// stream. It returns after CUDA accepts the work, not after the memory is
+// reclaimed. The memory stays valid for earlier work already queued on the
+// same stream, but the caller must not use the buffer afterwards. Idempotent
+// after a successful free; failures leave the buffer open so callers can
+// retry. Returns ErrContextClosed if the owning Context was closed first and
+// ErrContextMismatch if stream belongs to a different Context.
+func (b *Buffer[T]) FreeAsync(stream *Stream) error {
+	if b == nil {
+		return ErrNilBuffer
+	}
+	if stream == nil {
+		return ErrNilStream
+	}
+	stream.opMu.RLock()
+	defer stream.opMu.RUnlock()
+	if stream.closed {
+		return ErrStreamClosed
+	}
+	b.opMu.Lock()
+	defer b.opMu.Unlock()
+	if b.closed {
+		return nil
+	}
+	if stream.ctx != b.ctx {
+		return ErrContextMismatch
+	}
+	if err := b.ctx.doWait(context.Background(), func() error {
+		return cudaresult.MemFreeAsync(b.ctx.driver, b.ptr, stream.raw)
 	}); err != nil {
 		return err
 	}

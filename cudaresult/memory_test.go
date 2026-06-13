@@ -102,6 +102,106 @@ func TestMemFree(t *testing.T) {
 	}
 }
 
+func TestMemAllocAsync(t *testing.T) {
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		bytes   uint64
+		want    cudasys.CUdeviceptr
+		wantErr error
+	}{
+		{"nil driver", nil, 1024, 0, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, 1024, 0, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuMemAllocAsync: func(p *cudasys.CUdeviceptr, b uint64, stream cudasys.CUstream) cudasys.CUresult {
+				if b != 4096 {
+					t.Errorf("bytes = %d, want 4096", b)
+				}
+				if stream != 0x5151 {
+					t.Errorf("stream = %#x, want 0x5151", stream)
+				}
+				*p = 0xCAFE
+				return cudasys.CUDA_SUCCESS
+			}},
+			4096,
+			0xCAFE,
+			nil,
+		},
+		{
+			"out of memory",
+			&cudasys.Driver{CuMemAllocAsync: func(*cudasys.CUdeviceptr, uint64, cudasys.CUstream) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_OUT_OF_MEMORY
+			}},
+			1024,
+			0,
+			ErrOutOfMemory,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := MemAllocAsync(tc.driver, tc.bytes, 0x5151)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Errorf("err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("ptr = %#x, want %#x", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMemFreeAsync(t *testing.T) {
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		wantErr error
+	}{
+		{"nil driver", nil, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, ErrNotInitialized},
+		{
+			"success",
+			&cudasys.Driver{CuMemFreeAsync: func(p cudasys.CUdeviceptr, stream cudasys.CUstream) cudasys.CUresult {
+				if p != 0xCAFE {
+					t.Errorf("ptr = %#x, want 0xCAFE", p)
+				}
+				if stream != 0x5151 {
+					t.Errorf("stream = %#x, want 0x5151", stream)
+				}
+				return cudasys.CUDA_SUCCESS
+			}},
+			nil,
+		},
+		{
+			"invalid value",
+			&cudasys.Driver{CuMemFreeAsync: func(cudasys.CUdeviceptr, cudasys.CUstream) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_VALUE
+			}},
+			ErrInvalidValue,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := MemFreeAsync(tc.driver, 0xCAFE, 0x5151)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Errorf("unexpected err: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestMemcpyHtoD(t *testing.T) {
 	srcData := []byte{1, 2, 3, 4, 5}
 	src := &srcData[0]

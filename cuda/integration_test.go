@@ -850,3 +850,55 @@ func TestRealGraphCaptureReplay(t *testing.T) {
 	}
 	t.Logf("graph capture/replay ok: vector_add for %d elements replayed from a graph", n)
 }
+
+func TestRealAsyncAllocRoundTrip(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+	stream, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream: %v", err)
+	}
+	t.Cleanup(func() { _ = stream.Close() })
+
+	const n = 1024
+	buf, err := AllocAsync[float32](ctx, stream, n)
+	if err != nil {
+		t.Fatalf("AllocAsync: %v", err)
+	}
+
+	bg := context.Background()
+	src := make([]float32, n)
+	for i := range src {
+		src[i] = float32(i) * 1.5
+	}
+	if err := buf.CopyFrom(bg, src); err != nil {
+		t.Fatalf("CopyFrom: %v", err)
+	}
+	got := make([]float32, n)
+	if err := buf.CopyTo(bg, got); err != nil {
+		t.Fatalf("CopyTo: %v", err)
+	}
+	for i := range got {
+		if got[i] != src[i] {
+			t.Fatalf("async-alloc round-trip mismatch at %d: got=%v want=%v", i, got[i], src[i])
+		}
+	}
+
+	// Free on the stream, then make sure the work has drained before the
+	// context is torn down.
+	if err := buf.FreeAsync(stream); err != nil {
+		t.Fatalf("FreeAsync: %v", err)
+	}
+	if err := stream.Synchronize(bg); err != nil {
+		t.Fatalf("Synchronize: %v", err)
+	}
+	t.Logf("async alloc/free ok: round-tripped %d float32 through stream-ordered memory", n)
+}

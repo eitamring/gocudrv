@@ -15,6 +15,8 @@ import (
 type memCalls struct {
 	alloc       atomic.Int32
 	free        atomic.Int32
+	allocAsync  atomic.Int32
+	freeAsync   atomic.Int32
 	htod        atomic.Int32
 	dtoh        atomic.Int32
 	htodAsync   atomic.Int32
@@ -51,6 +53,19 @@ func fakeMemoryDriver(c *memCalls, basePtr uint64) *cudasys.Driver {
 		CuMemFree: func(p cudasys.CUdeviceptr) cudasys.CUresult {
 			c.free.Add(1)
 			c.lastPtr.Store(uintptr(p))
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemAllocAsync: func(p *cudasys.CUdeviceptr, b uint64, stream cudasys.CUstream) cudasys.CUresult {
+			c.allocAsync.Add(1)
+			c.lastSize.Store(b)
+			c.lastStream.Store(uintptr(stream))
+			*p = cudasys.CUdeviceptr(basePtr)
+			return cudasys.CUDA_SUCCESS
+		},
+		CuMemFreeAsync: func(p cudasys.CUdeviceptr, stream cudasys.CUstream) cudasys.CUresult {
+			c.freeAsync.Add(1)
+			c.lastPtr.Store(uintptr(p))
+			c.lastStream.Store(uintptr(stream))
 			return cudasys.CUDA_SUCCESS
 		},
 		CuMemcpyHtoD: func(_ cudasys.CUdeviceptr, _ *byte, _ uint64) cudasys.CUresult {
@@ -310,6 +325,184 @@ func TestAllocPropagatesDriverError(t *testing.T) {
 	}
 }
 
+func TestAllocAsyncHappy(t *testing.T) {
+	var calls memCalls
+	ctx, stream, _, _ := newAsyncCopyFixture(t, &calls)
+
+	buf, err := AllocAsync[float32](ctx, stream, 256)
+	if err != nil {
+		t.Fatalf("AllocAsync: %v", err)
+	}
+	t.Cleanup(func() { _ = buf.Close() })
+	if buf.Len() != 256 {
+		t.Errorf("Len = %d, want 256", buf.Len())
+	}
+	if buf.Bytes() != 256*4 {
+		t.Errorf("Bytes = %d, want %d", buf.Bytes(), 256*4)
+	}
+	if calls.allocAsync.Load() != 1 {
+		t.Errorf("allocAsync calls = %d, want 1", calls.allocAsync.Load())
+	}
+	if calls.lastSize.Load() != 256*4 {
+		t.Errorf("alloc size = %d, want %d", calls.lastSize.Load(), 256*4)
+	}
+	if calls.lastStream.Load() != 0x5151 {
+		t.Errorf("stream = %#x, want 0x5151", calls.lastStream.Load())
+	}
+}
+
+func TestAllocAsyncRejects(t *testing.T) {
+	var calls memCalls
+	ctx, stream, _, _ := newAsyncCopyFixture(t, &calls)
+	_, otherStream, _, _ := newAsyncCopyFixture(t, &memCalls{})
+	closedStream, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream: %v", err)
+	}
+	if err := closedStream.Close(); err != nil {
+		t.Fatalf("close stream: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		fn      func() error
+		wantErr error
+	}{
+		{"nil context", func() error { _, e := AllocAsync[float32](nil, stream, 16); return e }, ErrNilContext},
+		{"nil stream", func() error { _, e := AllocAsync[float32](ctx, nil, 16); return e }, ErrNilStream},
+		{"zero length", func() error { _, e := AllocAsync[float32](ctx, stream, 0); return e }, ErrInvalidLength},
+		{"negative length", func() error { _, e := AllocAsync[float32](ctx, stream, -1); return e }, ErrInvalidLength},
+		{"overflow", func() error { _, e := AllocAsync[float64](ctx, stream, math.MaxInt); return e }, ErrInvalidLength},
+		{"closed stream", func() error { _, e := AllocAsync[float32](ctx, closedStream, 16); return e }, ErrStreamClosed},
+		{"wrong stream context", func() error { _, e := AllocAsync[float32](ctx, otherStream, 16); return e }, ErrContextMismatch},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.fn(); !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+	if calls.allocAsync.Load() != 0 {
+		t.Errorf("allocAsync calls = %d, want 0", calls.allocAsync.Load())
+	}
+}
+
+func TestAllocAsyncPropagatesDriverError(t *testing.T) {
+	var calls memCalls
+	ctx, stream, _, _ := newAsyncCopyFixture(t, &calls)
+	ctx.driver.CuMemAllocAsync = func(*cudasys.CUdeviceptr, uint64, cudasys.CUstream) cudasys.CUresult {
+		return cudasys.CUDA_ERROR_OUT_OF_MEMORY
+	}
+	if _, err := AllocAsync[float32](ctx, stream, 16); !errors.Is(err, ErrOutOfMemory) {
+		t.Errorf("err = %v, want ErrOutOfMemory", err)
+	}
+}
+
+func TestFreeAsyncHappy(t *testing.T) {
+	var calls memCalls
+	ctx, stream, _, _ := newAsyncCopyFixture(t, &calls)
+
+	buf, err := AllocAsync[float32](ctx, stream, 8)
+	if err != nil {
+		t.Fatalf("AllocAsync: %v", err)
+	}
+	if err := buf.FreeAsync(stream); err != nil {
+		t.Fatalf("FreeAsync: %v", err)
+	}
+	if calls.freeAsync.Load() != 1 {
+		t.Errorf("freeAsync calls = %d, want 1", calls.freeAsync.Load())
+	}
+	if calls.lastStream.Load() != 0x5151 {
+		t.Errorf("stream = %#x, want 0x5151", calls.lastStream.Load())
+	}
+	// Idempotent after a successful free.
+	if err := buf.FreeAsync(stream); err != nil {
+		t.Fatalf("second FreeAsync: %v", err)
+	}
+	if calls.freeAsync.Load() != 1 {
+		t.Errorf("freeAsync calls after second = %d, want 1", calls.freeAsync.Load())
+	}
+	// A plain Close after FreeAsync must not issue a second free.
+	if err := buf.Close(); err != nil {
+		t.Fatalf("Close after FreeAsync: %v", err)
+	}
+	if calls.free.Load() != 0 {
+		t.Errorf("sync free calls = %d, want 0", calls.free.Load())
+	}
+}
+
+func TestFreeAsyncRejects(t *testing.T) {
+	var calls memCalls
+	ctx, stream, _, _ := newAsyncCopyFixture(t, &calls)
+	_, otherStream, _, _ := newAsyncCopyFixture(t, &memCalls{})
+	closedStream, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream: %v", err)
+	}
+	if err := closedStream.Close(); err != nil {
+		t.Fatalf("close stream: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		fn   func() error
+		want error
+	}{
+		{"nil buffer", func() error {
+			var b *Buffer[float32]
+			return b.FreeAsync(stream)
+		}, ErrNilBuffer},
+		{"nil stream", func() error {
+			b, _ := AllocAsync[float32](ctx, stream, 4)
+			return b.FreeAsync(nil)
+		}, ErrNilStream},
+		{"closed stream", func() error {
+			b, _ := AllocAsync[float32](ctx, stream, 4)
+			return b.FreeAsync(closedStream)
+		}, ErrStreamClosed},
+		{"wrong stream context", func() error {
+			b, _ := AllocAsync[float32](ctx, stream, 4)
+			return b.FreeAsync(otherStream)
+		}, ErrContextMismatch},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.fn(); !errors.Is(err, tc.want) {
+				t.Errorf("err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestFreeAsyncFailureCanRetry(t *testing.T) {
+	var calls memCalls
+	ctx, stream, _, _ := newAsyncCopyFixture(t, &calls)
+	failFirst := atomic.Bool{}
+	failFirst.Store(true)
+	ctx.driver.CuMemFreeAsync = func(cudasys.CUdeviceptr, cudasys.CUstream) cudasys.CUresult {
+		calls.freeAsync.Add(1)
+		if failFirst.Swap(false) {
+			return cudasys.CUDA_ERROR_INVALID_VALUE
+		}
+		return cudasys.CUDA_SUCCESS
+	}
+
+	buf, err := AllocAsync[float32](ctx, stream, 8)
+	if err != nil {
+		t.Fatalf("AllocAsync: %v", err)
+	}
+	if err := buf.FreeAsync(stream); !errors.Is(err, ErrInvalidValue) {
+		t.Fatalf("first FreeAsync err = %v, want ErrInvalidValue", err)
+	}
+	if err := buf.FreeAsync(stream); err != nil {
+		t.Fatalf("second FreeAsync: %v", err)
+	}
+	if calls.freeAsync.Load() != 2 {
+		t.Errorf("freeAsync calls = %d, want 2", calls.freeAsync.Load())
+	}
+}
+
 func TestBufferCloseIdempotent(t *testing.T) {
 	var calls memCalls
 	ctx := newTestContext(t, fakeMemoryDriver(&calls, 0xDEAD0000))
@@ -383,6 +576,9 @@ func TestNilBufferMethods(t *testing.T) {
 	}
 	if err := b.Close(); !errors.Is(err, ErrNilBuffer) {
 		t.Errorf("Close err = %v, want ErrNilBuffer", err)
+	}
+	if err := b.FreeAsync(nil); !errors.Is(err, ErrNilBuffer) {
+		t.Errorf("FreeAsync err = %v, want ErrNilBuffer", err)
 	}
 	if err := b.CopyFrom(context.Background(), []float32{1}); !errors.Is(err, ErrNilBuffer) {
 		t.Errorf("CopyFrom err = %v, want ErrNilBuffer", err)

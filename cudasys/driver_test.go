@@ -38,6 +38,8 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 		{"cuDevicePrimaryCtxRelease_v2 fails", "cuDevicePrimaryCtxRelease_v2"},
 		{"cuMemAlloc_v2 fails", "cuMemAlloc_v2"},
 		{"cuMemFree_v2 fails", "cuMemFree_v2"},
+		{"cuMemAllocAsync fails", "cuMemAllocAsync"},
+		{"cuMemFreeAsync fails", "cuMemFreeAsync"},
 		{"cuMemGetInfo_v2 fails", "cuMemGetInfo_v2"},
 		{"cuMemcpyHtoD_v2 fails", "cuMemcpyHtoD_v2"},
 		{"cuMemcpyDtoH_v2 fails", "cuMemcpyDtoH_v2"},
