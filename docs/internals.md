@@ -56,6 +56,8 @@ type Driver struct {
     CuDevicePrimaryCtxRelease func(dev CUdevice) CUresult
     CuMemAlloc                func(devPtr *CUdeviceptr, bytesize uint64) CUresult
     CuMemFree                 func(devPtr CUdeviceptr) CUresult
+    CuMemAllocAsync           func(devPtr *CUdeviceptr, bytesize uint64, stream CUstream) CUresult
+    CuMemFreeAsync            func(devPtr CUdeviceptr, stream CUstream) CUresult
     CuMemGetInfo              func(free *uint64, total *uint64) CUresult
     CuMemcpyHtoD              func(dst CUdeviceptr, src *byte, byteCount uint64) CUresult
     CuMemcpyDtoH              func(dst *byte, src CUdeviceptr, byteCount uint64) CUresult
@@ -115,6 +117,8 @@ type Driver struct {
 - `cuDevicePrimaryCtxRelease_v2`
 - `cuMemAlloc_v2`
 - `cuMemFree_v2`
+- `cuMemAllocAsync`
+- `cuMemFreeAsync`
 - `cuMemGetInfo_v2`
 - `cuMemcpyHtoD_v2`
 - `cuMemcpyDtoH_v2`
@@ -197,6 +201,14 @@ still reading or writing them.
 Async pinned-memory copies also use the strict submit path, but only wait until
 `cuMemcpy*Async` returns. That keeps stream and buffer handles stable while the
 driver accepts the work without pretending the GPU copy is complete.
+
+`AllocAsync` and `FreeAsync` (`cuMemAllocAsync` / `cuMemFreeAsync`) use the same
+strict `doWait` path. `AllocAsync` must wait for the submit call to return
+because that call produces the device pointer the `Buffer` wraps; the allocation
+itself is still stream-ordered and is only ready once the stream reaches that
+point. `FreeAsync` takes the buffer's write lock and sets the closed flag exactly
+like `Close`, so a later `Close` on the same buffer is a no-op rather than a
+double free; a failed free leaves the buffer open for retry.
 
 Panics inside `fn` are recovered and surfaced as `*executor.PanicError`;
 the executor stays alive so the caller can keep using it or close it.

@@ -22,6 +22,29 @@ func MemFree(d *cudasys.Driver, ptr cudasys.CUdeviceptr) error {
 	return check("cuMemFree_v2", d.CuMemFree(ptr))
 }
 
+// MemAllocAsync enqueues a stream-ordered allocation of bytes on stream and
+// returns the opaque pointer after the driver accepts the work. The memory is
+// not safe to access until the stream reaches this point.
+func MemAllocAsync(d *cudasys.Driver, bytes uint64, stream cudasys.CUstream) (cudasys.CUdeviceptr, error) {
+	if d == nil || d.CuMemAllocAsync == nil {
+		return 0, ErrNotInitialized
+	}
+	var ptr cudasys.CUdeviceptr
+	if err := check("cuMemAllocAsync", d.CuMemAllocAsync(&ptr, bytes, stream)); err != nil {
+		return 0, err
+	}
+	return ptr, nil
+}
+
+// MemFreeAsync enqueues a stream-ordered free of memory previously returned by
+// MemAllocAsync and returns after the driver accepts the work.
+func MemFreeAsync(d *cudasys.Driver, ptr cudasys.CUdeviceptr, stream cudasys.CUstream) error {
+	if d == nil || d.CuMemFreeAsync == nil {
+		return ErrNotInitialized
+	}
+	return check("cuMemFreeAsync", d.CuMemFreeAsync(ptr, stream))
+}
+
 // MemGetInfo returns the free and total device memory in bytes for the current
 // context's device.
 func MemGetInfo(d *cudasys.Driver) (free, total uint64, err error) {

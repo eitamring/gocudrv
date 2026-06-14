@@ -29,6 +29,8 @@ type Driver struct {
 	CuDevicePrimaryCtxRelease   func(dev CUdevice) CUresult
 	CuMemAlloc                  func(devPtr *CUdeviceptr, bytesize uint64) CUresult
 	CuMemFree                   func(devPtr CUdeviceptr) CUresult
+	CuMemAllocAsync             func(devPtr *CUdeviceptr, bytesize uint64, stream CUstream) CUresult
+	CuMemFreeAsync              func(devPtr CUdeviceptr, stream CUstream) CUresult
 	CuMemGetInfo                func(free *uint64, total *uint64) CUresult
 	CuMemcpyHtoD                func(dst CUdeviceptr, src *byte, byteCount uint64) CUresult
 	CuMemcpyDtoH                func(dst *byte, src CUdeviceptr, byteCount uint64) CUresult
@@ -99,6 +101,8 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuDevicePrimaryCtxRelease, "cuDevicePrimaryCtxRelease_v2"},
 		{&d.CuMemAlloc, "cuMemAlloc_v2"},
 		{&d.CuMemFree, "cuMemFree_v2"},
+		{&d.CuMemAllocAsync, "cuMemAllocAsync"},
+		{&d.CuMemFreeAsync, "cuMemFreeAsync"},
 		{&d.CuMemGetInfo, "cuMemGetInfo_v2"},
 		{&d.CuMemcpyHtoD, "cuMemcpyHtoD_v2"},
 		{&d.CuMemcpyDtoH, "cuMemcpyDtoH_v2"},
