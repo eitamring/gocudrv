@@ -148,6 +148,17 @@ if err := buf.CopyTo(bg, dst); err != nil {
 - `func Alloc[T Supported](ctx *Context, n int) (*Buffer[T], error)`
   allocates `n` elements. Rejects `nil` context, closed context, `n <= 0`,
   and byte-size overflow.
+- `func AllocAsync[T Supported](ctx *Context, stream *Stream, n int) (*Buffer[T], error)`
+  enqueues a stream-ordered allocation of `n` elements on `stream` and returns
+  once CUDA accepts the work. The memory must not be accessed until `stream`
+  reaches this point (for example after `Stream.Synchronize` or a later op on
+  the same stream). Rejects the same inputs as `Alloc`, plus `nil` stream,
+  closed stream, and a stream from a different context.
+- `(*Buffer[T]).FreeAsync(stream *Stream) error` enqueues a stream-ordered free
+  on `stream`. Idempotent after a successful free; failed frees leave the buffer
+  open so it can be retried. Returns `ErrContextClosed` if the owning context
+  was closed first and `ErrContextMismatch` if `stream` belongs to a different
+  context.
 - `(*Buffer[T]).Len() int` returns the element count.
 - `(*Buffer[T]).Bytes() uint64` returns the total byte size.
 - `(*Buffer[T]).Close() error` frees the device memory. Idempotent after a
@@ -190,6 +201,15 @@ if err := buf.CopyTo(bg, dst); err != nil {
 The async memset and device-to-device copy follow the same lifetime rule as the
 async host copies: do not close the buffers or the stream until
 `Stream.Synchronize` confirms the work is done.
+
+`AllocAsync` and `FreeAsync` are the stream-ordered counterparts of `Alloc` and
+`Close`. Allocation, use, and free are ordered on the same stream, so a buffer
+returned by `AllocAsync` is safe to use in later work queued on that stream
+without an intervening synchronize. Free the buffer with `FreeAsync` on a stream,
+or with `Close` once the stream work that uses it has completed. As with the
+other async ops, the memory is only valid after the stream reaches the
+allocation point, so do not access it from the host or another stream until
+`Stream.Synchronize` confirms the allocation is ready.
 
 Two free-function wrappers exist for callers who prefer the CUDA-style
 naming:
