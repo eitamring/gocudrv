@@ -378,6 +378,25 @@ for the duration of the copy. `Buffer.CopyFrom` / `CopyTo` with
 prevent another goroutine from closing the `HostBuffer` mid-copy, so the
 typed methods are the safe path for CUDA transfers.
 
+### registered host memory
+
+`AllocHost` allocates pinned memory the package owns. When you already hold a
+host slice (Go-allocated or external) and want the same pinned-transfer
+behavior without reallocating, `RegisterHost` page-locks it in place via
+`cuMemHostRegister`.
+
+- `func RegisterHost[T Supported](ctx *Context, mem []T) (*RegisteredHost[T], error)`
+  page-locks the backing memory of `mem`. Rejects nil context and an empty
+  slice, and returns `ErrSymbolUnavailable` on a driver without the symbol.
+- `(*RegisteredHost[T]).Slice()`, `Len()`, `Bytes()` report the registered
+  region; pass `Slice()` to `Buffer.CopyFrom` / `CopyTo`.
+- `(*RegisteredHost[T]).Close()` unregisters. Idempotent; a failed unregister
+  leaves it open to retry.
+
+Unlike `AllocHost`, the caller owns the memory: keep the slice alive and
+unchanged until `Close`, and free it only after unregistering. Close the
+registration before its `Context`.
+
 Use `Buffer.CopyFromHostAsync` / `CopyToHostAsync` with an explicit `Stream`
 when you want to enqueue copies that can overlap with other stream work. These
 methods are pinned-buffer only. There is intentionally no
@@ -750,7 +769,7 @@ ErrSystemDriverMismatch, ErrUnknown
 
 Go-side sentinels:
 
-- `ErrSymbolUnavailable`: an optional feature symbol (async allocation, occupancy, or graphs) was not present in the loaded driver, so that call cannot run. Core APIs are unaffected, so this is local to the feature rather than a load-time failure.
+- `ErrSymbolUnavailable`: an optional feature symbol (async allocation, occupancy, graphs, or device diagnostics) was not present in the loaded driver, so that call cannot run. Core APIs are unaffected, so this is local to the feature rather than a load-time failure.
 - `ErrInvalidOrdinal`: `GetDevice` rejected the ordinal before calling CUDA.
 - `ErrNilDevice`: a method was called on a nil `*Device`.
 - `ErrNilContext`: a method was called on a nil `*Context`.

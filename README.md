@@ -7,10 +7,10 @@ Status: very early. The current API covers initialization, device discovery,
 primary contexts, memory, module loading, kernel launch, explicit streams,
 events, async pinned copies, device memory primitives (memset, typed fill,
 device-to-device copy, free/total query), buffer subrange (offset) copies,
-non-owning buffer views, occupancy helpers, device global access, CUDA graph
-capture and replay,
-stream-ordered async allocation, device diagnostics (PCI bus id, UUID, and more
-attributes), and raw handle accessors for sibling-module integration.
+non-owning buffer views, host memory registration, occupancy helpers, device
+global access, CUDA graph capture and replay, stream-ordered async allocation,
+device diagnostics (PCI bus id, UUID, and more attributes), and raw handle
+accessors for sibling-module integration.
 
 ## What it is
 
@@ -49,12 +49,12 @@ raw handles behind Go types such as `Device`.
 CUDA headers and the CUDA toolkit are not required to build this package.
 
 The core driver symbols are required at init and have been stable across many
-CUDA releases, so the package loads on a wide range of drivers. The newer feature
-groups (stream-ordered allocation, CUDA graphs) are bound best-effort: on a
-driver that lacks them `Init` still succeeds, and only the matching call returns
-`ErrSymbolUnavailable`. Async allocation needs CUDA 11.2 and graphs need a CUDA
-11.x driver when used. See `docs/internals.md` for the full symbol table and the
-per-group breakdown.
+CUDA releases, so the package loads on a wide range of drivers. The feature
+groups (stream-ordered allocation, CUDA graphs, occupancy, and device
+diagnostics) are bound best-effort: on a driver that lacks one, `Init` still
+succeeds, and only the matching call returns `ErrSymbolUnavailable`. Async
+allocation needs CUDA 11.2 and graphs need a CUDA 11.x driver when used. See
+`docs/internals.md` for the full symbol table and the per-group breakdown.
 
 ## WSL2 quickstart
 
