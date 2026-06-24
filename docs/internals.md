@@ -80,6 +80,10 @@ type Driver struct {
     CuMemAllocPitch           func(dptr *CUdeviceptr, pitch *uint64, widthInBytes, height uint64, elementSizeBytes uint32) CUresult
     CuMemcpy2D                func(pCopy *Memcpy2D) CUresult
     CuMemcpy2DAsync           func(pCopy *Memcpy2D, stream CUstream) CUresult
+    CuDeviceGetDefaultMemPool func(pool *CUmemoryPool, dev CUdevice) CUresult
+    CuMemPoolGetAttribute     func(pool CUmemoryPool, attr int32, value unsafe.Pointer) CUresult
+    CuMemPoolSetAttribute     func(pool CUmemoryPool, attr int32, value unsafe.Pointer) CUresult
+    CuMemAllocFromPoolAsync   func(dptr *CUdeviceptr, bytesize uint64, pool CUmemoryPool, stream CUstream) CUresult
     CuModuleLoadData          func(module *CUmodule, image *byte) CUresult
     CuModuleUnload            func(module CUmodule) CUresult
     CuModuleGetFunction       func(fn *CUfunction, module CUmodule, name *byte) CUresult
@@ -188,6 +192,10 @@ driver lacks the symbol):
 | `cuMemAllocPitch_v2` | `CuMemAllocPitch` | pitched memory | CUDA 3.2 |
 | `cuMemcpy2D_v2` | `CuMemcpy2D` | pitched memory | CUDA 3.2 |
 | `cuMemcpy2DAsync_v2` | `CuMemcpy2DAsync` | pitched memory | CUDA 3.2 |
+| `cuDeviceGetDefaultMemPool` | `CuDeviceGetDefaultMemPool` | memory pools | CUDA 11.2 |
+| `cuMemPoolGetAttribute` | `CuMemPoolGetAttribute` | memory pools | CUDA 11.2 |
+| `cuMemPoolSetAttribute` | `CuMemPoolSetAttribute` | memory pools | CUDA 11.2 |
+| `cuMemAllocFromPoolAsync` | `CuMemAllocFromPoolAsync` | memory pools | CUDA 11.2 |
 
 ### minimum practical driver version
 

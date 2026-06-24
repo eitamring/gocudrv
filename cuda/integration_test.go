@@ -902,3 +902,69 @@ func TestRealAsyncAllocRoundTrip(t *testing.T) {
 	}
 	t.Logf("async alloc/free ok: round-tripped %d float32 through stream-ordered memory", n)
 }
+
+func TestRealMemoryPool(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+
+	pool, err := ctx.DefaultMemPool()
+	if errors.Is(err, ErrSymbolUnavailable) {
+		t.Skip("memory pools not supported on this driver")
+	}
+	if err != nil {
+		t.Fatalf("DefaultMemPool: %v", err)
+	}
+	if err := pool.SetReleaseThreshold(1 << 20); err != nil {
+		t.Fatalf("SetReleaseThreshold: %v", err)
+	}
+	if got, err := pool.ReleaseThreshold(); err != nil || got != 1<<20 {
+		t.Fatalf("ReleaseThreshold = %d, %v; want 1048576", got, err)
+	}
+
+	stream, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream: %v", err)
+	}
+	t.Cleanup(func() { _ = stream.Close() })
+
+	const n = 4096
+	buf, err := AllocFromPool[float32](pool, stream, n)
+	if err != nil {
+		t.Fatalf("AllocFromPool: %v", err)
+	}
+	src := make([]float32, n)
+	for i := range src {
+		src[i] = float32(i)
+	}
+	if err := buf.CopyFromHostAsync(context.Background(), stream, mustHost(t, ctx, src)); err != nil {
+		t.Fatalf("CopyFromHostAsync: %v", err)
+	}
+	if err := stream.Synchronize(context.Background()); err != nil {
+		t.Fatalf("Synchronize: %v", err)
+	}
+	if err := buf.FreeAsync(stream); err != nil {
+		t.Fatalf("FreeAsync: %v", err)
+	}
+	if err := stream.Synchronize(context.Background()); err != nil {
+		t.Fatalf("Synchronize after free: %v", err)
+	}
+}
+
+func mustHost(t *testing.T, ctx *Context, src []float32) *HostBuffer[float32] {
+	t.Helper()
+	h, err := AllocHost[float32](ctx, len(src))
+	if err != nil {
+		t.Fatalf("AllocHost: %v", err)
+	}
+	t.Cleanup(func() { _ = h.Close() })
+	copy(h.Slice(), src)
+	return h
+}
