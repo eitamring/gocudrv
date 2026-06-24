@@ -11,8 +11,8 @@ func TestStreamBeginCapture(t *testing.T) {
 	if err := StreamBeginCapture(nil, 0x5151, 0); !errors.Is(err, ErrNotInitialized) {
 		t.Errorf("nil driver = %v, want ErrNotInitialized", err)
 	}
-	if err := StreamBeginCapture(&cudasys.Driver{}, 0x5151, 0); !errors.Is(err, ErrNotInitialized) {
-		t.Errorf("nil func = %v, want ErrNotInitialized", err)
+	if err := StreamBeginCapture(&cudasys.Driver{}, 0x5151, 0); !errors.Is(err, ErrSymbolUnavailable) {
+		t.Errorf("nil func = %v, want ErrSymbolUnavailable", err)
 	}
 	var gotMode uint32
 	d := &cudasys.Driver{CuStreamBeginCapture: func(_ cudasys.CUstream, mode uint32) cudasys.CUresult {
@@ -37,6 +37,9 @@ func TestStreamEndCapture(t *testing.T) {
 	if _, err := StreamEndCapture(nil, 0x5151); !errors.Is(err, ErrNotInitialized) {
 		t.Errorf("nil driver = %v, want ErrNotInitialized", err)
 	}
+	if _, err := StreamEndCapture(&cudasys.Driver{}, 0x5151); !errors.Is(err, ErrSymbolUnavailable) {
+		t.Errorf("nil func = %v, want ErrSymbolUnavailable", err)
+	}
 	d := &cudasys.Driver{CuStreamEndCapture: func(_ cudasys.CUstream, g *cudasys.CUgraph) cudasys.CUresult {
 		*g = 0x6A6A
 		return cudasys.CUDA_SUCCESS
@@ -54,6 +57,9 @@ func TestGraphInstantiate(t *testing.T) {
 	if _, err := GraphInstantiate(nil, 0x6A6A, 0); !errors.Is(err, ErrNotInitialized) {
 		t.Errorf("nil driver = %v, want ErrNotInitialized", err)
 	}
+	if _, err := GraphInstantiate(&cudasys.Driver{}, 0x6A6A, 0); !errors.Is(err, ErrSymbolUnavailable) {
+		t.Errorf("nil func = %v, want ErrSymbolUnavailable", err)
+	}
 	d := &cudasys.Driver{CuGraphInstantiate: func(e *cudasys.CUgraphExec, _ cudasys.CUgraph, _ uint64) cudasys.CUresult {
 		*e = 0x7E7E
 		return cudasys.CUDA_SUCCESS
@@ -70,6 +76,9 @@ func TestGraphInstantiate(t *testing.T) {
 func TestGraphLaunchAndDestroy(t *testing.T) {
 	if err := GraphLaunch(nil, 0x7E7E, 0x5151); !errors.Is(err, ErrNotInitialized) {
 		t.Errorf("launch nil driver = %v, want ErrNotInitialized", err)
+	}
+	if err := GraphLaunch(&cudasys.Driver{}, 0x7E7E, 0x5151); !errors.Is(err, ErrSymbolUnavailable) {
+		t.Errorf("launch nil func = %v, want ErrSymbolUnavailable", err)
 	}
 	var gotStream cudasys.CUstream
 	d := &cudasys.Driver{
@@ -94,5 +103,11 @@ func TestGraphLaunchAndDestroy(t *testing.T) {
 	}
 	if err := GraphDestroy(nil, 0x6A6A); !errors.Is(err, ErrNotInitialized) {
 		t.Errorf("destroy nil driver = %v, want ErrNotInitialized", err)
+	}
+	if err := GraphDestroy(&cudasys.Driver{}, 0x6A6A); !errors.Is(err, ErrSymbolUnavailable) {
+		t.Errorf("destroy nil func = %v, want ErrSymbolUnavailable", err)
+	}
+	if err := GraphExecDestroy(&cudasys.Driver{}, 0x7E7E); !errors.Is(err, ErrSymbolUnavailable) {
+		t.Errorf("exec destroy nil func = %v, want ErrSymbolUnavailable", err)
 	}
 }

@@ -45,11 +45,13 @@ raw handles behind Go types such as `Device`.
 
 CUDA headers and the CUDA toolkit are not required to build this package.
 
-Every driver symbol is resolved at init, so the practical minimum is a driver
-recent enough to export all of them. The newest entries in the bound set are the
-stream-ordered allocator and the CUDA graph calls, which puts the floor at a
-driver from the CUDA 11.x series (Linux `R460` or newer). See
-`docs/internals.md` for the full symbol table and the per-group breakdown.
+The core driver symbols are required at init and have been stable across many
+CUDA releases, so the package loads on a wide range of drivers. The newer feature
+groups (stream-ordered allocation, CUDA graphs) are bound best-effort: on a
+driver that lacks them `Init` still succeeds, and only the matching call returns
+`ErrSymbolUnavailable`. Async allocation needs CUDA 11.2 and graphs need a CUDA
+11.x driver when used. See `docs/internals.md` for the full symbol table and the
+per-group breakdown.
 
 ## WSL2 quickstart
 

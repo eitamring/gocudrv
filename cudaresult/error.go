@@ -1,10 +1,18 @@
 package cudaresult
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/eitamring/gocudrv/cudasys"
 )
+
+// ErrSymbolUnavailable reports that an optional driver entry point was missing
+// when the library loaded, so the API that needs it cannot run. Core symbols
+// are always required at init, so this only applies to feature groups such as
+// async allocation, occupancy, and graphs. It is not a CUDA result code, so it
+// does not match any *Error sentinel; match it directly with errors.Is.
+var ErrSymbolUnavailable = errors.New("cuda: optional driver symbol unavailable")
 
 // Error wraps a CUDA driver result code into a Go error. Op records the name
 // of the driver call that produced the code.

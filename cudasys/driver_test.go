@@ -19,73 +19,13 @@ func (f *fakeLib) Close() error {
 }
 
 func TestLoadClosesLibOnBindFailure(t *testing.T) {
-	cases := []struct {
-		name   string
-		failOn string
-	}{
-		{"cuInit fails", "cuInit"},
-		{"cuDriverGetVersion fails", "cuDriverGetVersion"},
-		{"cuDeviceGetCount fails", "cuDeviceGetCount"},
-		{"cuDeviceGet fails", "cuDeviceGet"},
-		{"cuDeviceGetName fails", "cuDeviceGetName"},
-		{"cuDeviceTotalMem_v2 fails", "cuDeviceTotalMem_v2"},
-		{"cuDeviceGetAttribute fails", "cuDeviceGetAttribute"},
-		{"cuCtxGetCurrent fails", "cuCtxGetCurrent"},
-		{"cuCtxSetCurrent fails", "cuCtxSetCurrent"},
-		{"cuCtxSynchronize fails", "cuCtxSynchronize"},
-		{"cuCtxGetStreamPriorityRange fails", "cuCtxGetStreamPriorityRange"},
-		{"cuDevicePrimaryCtxRetain fails", "cuDevicePrimaryCtxRetain"},
-		{"cuDevicePrimaryCtxRelease_v2 fails", "cuDevicePrimaryCtxRelease_v2"},
-		{"cuMemAlloc_v2 fails", "cuMemAlloc_v2"},
-		{"cuMemFree_v2 fails", "cuMemFree_v2"},
-		{"cuMemAllocAsync fails", "cuMemAllocAsync"},
-		{"cuMemFreeAsync fails", "cuMemFreeAsync"},
-		{"cuMemGetInfo_v2 fails", "cuMemGetInfo_v2"},
-		{"cuMemcpyHtoD_v2 fails", "cuMemcpyHtoD_v2"},
-		{"cuMemcpyDtoH_v2 fails", "cuMemcpyDtoH_v2"},
-		{"cuMemcpyDtoD_v2 fails", "cuMemcpyDtoD_v2"},
-		{"cuMemcpyHtoDAsync_v2 fails", "cuMemcpyHtoDAsync_v2"},
-		{"cuMemcpyDtoHAsync_v2 fails", "cuMemcpyDtoHAsync_v2"},
-		{"cuMemcpyDtoDAsync_v2 fails", "cuMemcpyDtoDAsync_v2"},
-		{"cuMemsetD8_v2 fails", "cuMemsetD8_v2"},
-		{"cuMemsetD16_v2 fails", "cuMemsetD16_v2"},
-		{"cuMemsetD32_v2 fails", "cuMemsetD32_v2"},
-		{"cuMemsetD8Async fails", "cuMemsetD8Async"},
-		{"cuMemsetD16Async fails", "cuMemsetD16Async"},
-		{"cuMemsetD32Async fails", "cuMemsetD32Async"},
-		{"cuMemAllocHost_v2 fails", "cuMemAllocHost_v2"},
-		{"cuMemFreeHost fails", "cuMemFreeHost"},
-		{"cuModuleLoadData fails", "cuModuleLoadData"},
-		{"cuModuleUnload fails", "cuModuleUnload"},
-		{"cuModuleGetFunction fails", "cuModuleGetFunction"},
-		{"cuModuleGetGlobal_v2 fails", "cuModuleGetGlobal_v2"},
-		{"cuStreamCreate fails", "cuStreamCreate"},
-		{"cuStreamCreateWithPriority fails", "cuStreamCreateWithPriority"},
-		{"cuStreamDestroy_v2 fails", "cuStreamDestroy_v2"},
-		{"cuStreamSynchronize fails", "cuStreamSynchronize"},
-		{"cuStreamWaitEvent fails", "cuStreamWaitEvent"},
-		{"cuEventCreate fails", "cuEventCreate"},
-		{"cuEventDestroy_v2 fails", "cuEventDestroy_v2"},
-		{"cuEventRecord fails", "cuEventRecord"},
-		{"cuEventQuery fails", "cuEventQuery"},
-		{"cuEventSynchronize fails", "cuEventSynchronize"},
-		{"cuEventElapsedTime fails", "cuEventElapsedTime"},
-		{"cuLaunchKernel fails", "cuLaunchKernel"},
-		{"cuOccupancyMaxActiveBlocksPerMultiprocessor fails", "cuOccupancyMaxActiveBlocksPerMultiprocessor"},
-		{"cuOccupancyMaxPotentialBlockSize fails", "cuOccupancyMaxPotentialBlockSize"},
-		{"cuStreamBeginCapture_v2 fails", "cuStreamBeginCapture_v2"},
-		{"cuStreamEndCapture fails", "cuStreamEndCapture"},
-		{"cuGraphInstantiateWithFlags fails", "cuGraphInstantiateWithFlags"},
-		{"cuGraphLaunch fails", "cuGraphLaunch"},
-		{"cuGraphDestroy fails", "cuGraphDestroy"},
-		{"cuGraphExecDestroy fails", "cuGraphExecDestroy"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	// A failure binding any required symbol must close the library and fail Load.
+	for _, failOn := range expectedRequiredOrder {
+		t.Run(failOn+" fails", func(t *testing.T) {
 			prev := bindFn
 			t.Cleanup(func() { bindFn = prev })
 			bindFn = func(_ dynload.Library, _ any, name string) error {
-				if name == tc.failOn {
+				if name == failOn {
 					return errors.New("bind: nope")
 				}
 				return nil
@@ -148,10 +88,11 @@ func TestCloseOnNilReceiverAndEmptyDriver(t *testing.T) {
 	}
 }
 
-// expectedBindOrder is the exact sequence of driver symbols Load resolves. It
-// mirrors the table in docs/internals.md; update both together when the bound
-// surface changes.
-var expectedBindOrder = []string{
+// expectedRequiredOrder and expectedOptionalOrder are the exact sequences Load
+// binds: required symbols first (fatal on failure), then optional feature
+// symbols (best-effort). They mirror the tables in docs/internals.md; update
+// both together when the bound surface changes.
+var expectedRequiredOrder = []string{
 	"cuInit",
 	"cuDriverGetVersion",
 	"cuDeviceGetCount",
@@ -167,8 +108,6 @@ var expectedBindOrder = []string{
 	"cuDevicePrimaryCtxRelease_v2",
 	"cuMemAlloc_v2",
 	"cuMemFree_v2",
-	"cuMemAllocAsync",
-	"cuMemFreeAsync",
 	"cuMemGetInfo_v2",
 	"cuMemcpyHtoD_v2",
 	"cuMemcpyDtoH_v2",
@@ -200,6 +139,11 @@ var expectedBindOrder = []string{
 	"cuEventSynchronize",
 	"cuEventElapsedTime",
 	"cuLaunchKernel",
+}
+
+var expectedOptionalOrder = []string{
+	"cuMemAllocAsync",
+	"cuMemFreeAsync",
 	"cuOccupancyMaxActiveBlocksPerMultiprocessor",
 	"cuOccupancyMaxPotentialBlockSize",
 	"cuStreamBeginCapture_v2",
@@ -230,10 +174,11 @@ func TestLoadBindsExpectedSymbolsInOrder(t *testing.T) {
 		t.Fatalf("unexpected err: %v", err)
 	}
 
-	if len(got) != len(expectedBindOrder) {
-		t.Fatalf("bound %d symbols, want %d", len(got), len(expectedBindOrder))
+	want := append(append([]string{}, expectedRequiredOrder...), expectedOptionalOrder...)
+	if len(got) != len(want) {
+		t.Fatalf("bound %d symbols, want %d", len(got), len(want))
 	}
-	for i, name := range expectedBindOrder {
+	for i, name := range want {
 		if got[i] != name {
 			t.Errorf("bind[%d] = %q, want %q", i, got[i], name)
 		}
@@ -267,13 +212,13 @@ func TestLoadStopsAtFirstBindFailure(t *testing.T) {
 	}
 
 	idx := -1
-	for i, name := range expectedBindOrder {
+	for i, name := range expectedRequiredOrder {
 		if name == failAt {
 			idx = i
 			break
 		}
 	}
-	want := expectedBindOrder[:idx+1]
+	want := expectedRequiredOrder[:idx+1]
 	if len(attempted) != len(want) {
 		t.Fatalf("attempted %d binds before stopping, want %d", len(attempted), len(want))
 	}
@@ -281,5 +226,35 @@ func TestLoadStopsAtFirstBindFailure(t *testing.T) {
 		if attempted[i] != name {
 			t.Errorf("attempt[%d] = %q, want %q", i, attempted[i], name)
 		}
+	}
+}
+
+// TestLoadSkipsMissingOptionalSymbols checks that a driver missing an optional
+// feature symbol still loads: the failing bind is swallowed and the library is
+// kept open, so only calling the affected API surfaces the gap.
+func TestLoadSkipsMissingOptionalSymbols(t *testing.T) {
+	for _, missing := range expectedOptionalOrder {
+		t.Run(missing+" missing", func(t *testing.T) {
+			prev := bindFn
+			t.Cleanup(func() { bindFn = prev })
+			bindFn = func(_ dynload.Library, _ any, name string) error {
+				if name == missing {
+					return errors.New("bind: nope")
+				}
+				return nil
+			}
+
+			f := &fakeLib{}
+			d, err := Load(f)
+			if err != nil {
+				t.Fatalf("Load failed on missing optional %q: %v", missing, err)
+			}
+			if d == nil {
+				t.Fatal("want non-nil Driver")
+			}
+			if f.closed != 0 {
+				t.Errorf("closed = %d, want 0 (library must stay open)", f.closed)
+			}
+		})
 	}
 }

@@ -50,6 +50,7 @@ var (
 	ErrInvalidValue               = cudaresult.ErrInvalidValue
 	ErrOutOfMemory                = cudaresult.ErrOutOfMemory
 	ErrNotInitialized             = cudaresult.ErrNotInitialized
+	ErrSymbolUnavailable          = cudaresult.ErrSymbolUnavailable
 	ErrDeinitialized              = cudaresult.ErrDeinitialized
 	ErrProfilerDisabled           = cudaresult.ErrProfilerDisabled
 	ErrStubLibrary                = cudaresult.ErrStubLibrary
