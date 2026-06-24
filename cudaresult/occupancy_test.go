@@ -15,7 +15,7 @@ func TestOccupancyMaxActiveBlocksPerMultiprocessor(t *testing.T) {
 		wantN   int
 	}{
 		{"nil driver", nil, ErrNotInitialized, 0},
-		{"nil func", &cudasys.Driver{}, ErrNotInitialized, 0},
+		{"nil func", &cudasys.Driver{}, ErrSymbolUnavailable, 0},
 		{
 			"success",
 			&cudasys.Driver{CuOccupancyMaxActiveBlocksPerMultiprocessor: func(n *int32, _ cudasys.CUfunction, blockSize int32, dyn uint64) cudasys.CUresult {
@@ -61,7 +61,7 @@ func TestOccupancyMaxPotentialBlockSize(t *testing.T) {
 		wantErr error
 	}{
 		{"nil driver", nil, ErrNotInitialized},
-		{"nil func", &cudasys.Driver{}, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, ErrSymbolUnavailable},
 		{
 			"success",
 			&cudasys.Driver{CuOccupancyMaxPotentialBlockSize: func(minGrid *int32, block *int32, _ cudasys.CUfunction, b2d uintptr, dyn uint64, limit int32) cudasys.CUresult {

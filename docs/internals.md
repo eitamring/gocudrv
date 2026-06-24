@@ -100,11 +100,13 @@ type Driver struct {
 }
 ```
 
-`cudasys.Load` resolves every symbol below at init. They split into a core
-set the package always needs and a few feature groups that are only used by
-specific APIs. Today all of them are required at init; the feature groups are
-the candidates for optional binding in a later change so that older drivers
-keep working when those features are unused.
+`cudasys.Load` binds two groups of symbols. The core set is required: if any
+core symbol is missing the load fails and the library is closed. The feature
+groups (async allocation, occupancy, graphs) are bound best-effort: a driver
+that does not export one still loads, leaves that function pointer nil, and the
+wrapper for the affected call returns `ErrSymbolUnavailable`. This keeps newer
+features from raising the minimum driver version for callers that never use
+them.
 
 Core symbols (always required at init):
 
@@ -157,7 +159,8 @@ Core symbols (always required at init):
 | `cuEventElapsedTime` | `CuEventElapsedTime` | event |
 | `cuLaunchKernel` | `CuLaunchKernel` | launch |
 
-Feature symbols (bound at init today, candidates for optional binding):
+Feature symbols (bound best-effort; calls return `ErrSymbolUnavailable` if the
+driver lacks the symbol):
 
 | C entry point | `Driver` field | group | since |
 | --- | --- | --- | --- |
@@ -174,16 +177,17 @@ Feature symbols (bound at init today, candidates for optional binding):
 
 ### minimum practical driver version
 
-Because every symbol is resolved at init, the practical floor is set by the
-newest entry points in the bound set: the stream-ordered allocator
-(`cuMemAllocAsync` / `cuMemFreeAsync`, CUDA 11.2) and the graph entry points
-(`cuGraphInstantiateWithFlags` and friends, CUDA 11.x). In practice this means
-a driver from the CUDA 11.x series (Linux `R460` or newer). `Load` returns the
-first failing bind error on anything older. Making the feature groups optional
-would lower this floor for callers that do not use async allocation or graphs.
+Only the core set must be present for `Load` to succeed, and those symbols have
+been stable across many CUDA releases, so the practical floor for loading is
+well below the newest features. The feature groups set their own floors, and
+only when used: async allocation needs CUDA 11.2 and graphs need a CUDA 11.x
+driver. On an older driver `Load` still succeeds; calling an unavailable feature
+returns `ErrSymbolUnavailable` (matchable with `errors.Is`), so the gap is
+explicit and local to the call rather than a hard failure at init.
 
-If any bind fails, `Load` closes the library before returning. On successful
-initialization, the package-global `cuda` driver keeps the handle alive.
+If a required bind fails, `Load` closes the library before returning; a missing
+optional symbol is skipped. On successful initialization, the package-global
+`cuda` driver keeps the handle alive.
 
 ## result mapping
 

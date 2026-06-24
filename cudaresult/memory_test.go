@@ -111,7 +111,7 @@ func TestMemAllocAsync(t *testing.T) {
 		wantErr error
 	}{
 		{"nil driver", nil, 1024, 0, ErrNotInitialized},
-		{"nil func", &cudasys.Driver{}, 1024, 0, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, 1024, 0, ErrSymbolUnavailable},
 		{
 			"success",
 			&cudasys.Driver{CuMemAllocAsync: func(p *cudasys.CUdeviceptr, b uint64, stream cudasys.CUstream) cudasys.CUresult {
@@ -164,7 +164,7 @@ func TestMemFreeAsync(t *testing.T) {
 		wantErr error
 	}{
 		{"nil driver", nil, ErrNotInitialized},
-		{"nil func", &cudasys.Driver{}, ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, ErrSymbolUnavailable},
 		{
 			"success",
 			&cudasys.Driver{CuMemFreeAsync: func(p cudasys.CUdeviceptr, stream cudasys.CUstream) cudasys.CUresult {

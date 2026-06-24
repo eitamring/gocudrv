@@ -6,8 +6,11 @@ import "github.com/eitamring/gocudrv/cudasys"
 // active blocks per multiprocessor for fn at blockSize threads and
 // dynamicSMemSize bytes of dynamic shared memory.
 func OccupancyMaxActiveBlocksPerMultiprocessor(d *cudasys.Driver, fn cudasys.CUfunction, blockSize int32, dynamicSMemSize uint64) (int, error) {
-	if d == nil || d.CuOccupancyMaxActiveBlocksPerMultiprocessor == nil {
+	if d == nil {
 		return 0, ErrNotInitialized
+	}
+	if d.CuOccupancyMaxActiveBlocksPerMultiprocessor == nil {
+		return 0, ErrSymbolUnavailable
 	}
 	var numBlocks int32
 	if err := check("cuOccupancyMaxActiveBlocksPerMultiprocessor", d.CuOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocks, fn, blockSize, dynamicSMemSize)); err != nil {
@@ -21,8 +24,11 @@ func OccupancyMaxActiveBlocksPerMultiprocessor(d *cudasys.Driver, fn cudasys.CUf
 // suggested block size; pass 0 for no limit. The dynamic-shared-memory size
 // callback is always null, so dynamicSMemSize is treated as a fixed amount.
 func OccupancyMaxPotentialBlockSize(d *cudasys.Driver, fn cudasys.CUfunction, dynamicSMemSize uint64, blockSizeLimit int32) (minGridSize, blockSize int, err error) {
-	if d == nil || d.CuOccupancyMaxPotentialBlockSize == nil {
+	if d == nil {
 		return 0, 0, ErrNotInitialized
+	}
+	if d.CuOccupancyMaxPotentialBlockSize == nil {
+		return 0, 0, ErrSymbolUnavailable
 	}
 	var mgs, bs int32
 	if e := check("cuOccupancyMaxPotentialBlockSize", d.CuOccupancyMaxPotentialBlockSize(&mgs, &bs, fn, 0, dynamicSMemSize, blockSizeLimit)); e != nil {

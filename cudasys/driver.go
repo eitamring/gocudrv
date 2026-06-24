@@ -77,19 +77,23 @@ type Driver struct {
 // bindFn is the symbol-binding function used by Load. Overridable in tests.
 var bindFn = bind
 
-// Load binds the CUDA driver symbols from lib. Every symbol below is resolved
-// at init today, so Load fails on a driver that is missing any of them; see
-// docs/internals.md for the symbol table and the practical minimum driver
-// version. The groups marked as feature symbols (async allocation, occupancy,
-// graphs) are the candidates for optional binding in a later change. If any
-// binding fails, the library is closed before returning the error so callers
-// do not have to track ownership of the handle on the failure path.
+// symbol pairs a destination function pointer with its driver entry-point name.
+type symbol struct {
+	fn   any
+	name string
+}
+
+// Load binds the CUDA driver symbols from lib. Core symbols are required: if any
+// of them fails to bind, the library is closed and the error is returned, so
+// callers do not have to track ownership of the handle on the failure path.
+// Feature symbols (async allocation, occupancy, graphs) are bound best-effort: a
+// driver that does not export one leaves its pointer nil and the corresponding
+// API returns ErrSymbolUnavailable when called, so newer features do not raise
+// the minimum driver version for callers that never use them. See
+// docs/internals.md for the symbol table and the practical minimum version.
 func Load(lib dynload.Library) (*Driver, error) {
 	d := &Driver{lib: lib}
-	binds := []struct {
-		fn   any
-		name string
-	}{
+	required := []symbol{
 		// init
 		{&d.CuInit, "cuInit"},
 		{&d.CuDriverGetVersion, "cuDriverGetVersion"},
@@ -109,9 +113,6 @@ func Load(lib dynload.Library) (*Driver, error) {
 		// synchronous device and pinned host memory
 		{&d.CuMemAlloc, "cuMemAlloc_v2"},
 		{&d.CuMemFree, "cuMemFree_v2"},
-		// stream-ordered async allocation (feature, CUDA 11.2+)
-		{&d.CuMemAllocAsync, "cuMemAllocAsync"},
-		{&d.CuMemFreeAsync, "cuMemFreeAsync"},
 		{&d.CuMemGetInfo, "cuMemGetInfo_v2"},
 		{&d.CuMemcpyHtoD, "cuMemcpyHtoD_v2"},
 		{&d.CuMemcpyDtoH, "cuMemcpyDtoH_v2"},
@@ -147,10 +148,15 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuEventElapsedTime, "cuEventElapsedTime"},
 		// kernel launch
 		{&d.CuLaunchKernel, "cuLaunchKernel"},
-		// occupancy helpers (feature, CUDA 6.5+)
+	}
+	optional := []symbol{
+		// stream-ordered async allocation (CUDA 11.2+)
+		{&d.CuMemAllocAsync, "cuMemAllocAsync"},
+		{&d.CuMemFreeAsync, "cuMemFreeAsync"},
+		// occupancy helpers (CUDA 6.5+)
 		{&d.CuOccupancyMaxActiveBlocksPerMultiprocessor, "cuOccupancyMaxActiveBlocksPerMultiprocessor"},
 		{&d.CuOccupancyMaxPotentialBlockSize, "cuOccupancyMaxPotentialBlockSize"},
-		// graph capture and replay (feature, CUDA 11.x)
+		// graph capture and replay (CUDA 11.x)
 		{&d.CuStreamBeginCapture, "cuStreamBeginCapture_v2"},
 		{&d.CuStreamEndCapture, "cuStreamEndCapture"},
 		{&d.CuGraphInstantiate, "cuGraphInstantiateWithFlags"},
@@ -158,11 +164,16 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuGraphDestroy, "cuGraphDestroy"},
 		{&d.CuGraphExecDestroy, "cuGraphExecDestroy"},
 	}
-	for _, b := range binds {
+	for _, b := range required {
 		if err := bindFn(lib, b.fn, b.name); err != nil {
 			_ = lib.Close()
 			return nil, err
 		}
+	}
+	for _, b := range optional {
+		// Best-effort: a missing optional symbol leaves the pointer nil. The
+		// wrapper for that call reports ErrSymbolUnavailable.
+		_ = bindFn(lib, b.fn, b.name)
 	}
 	return d, nil
 }

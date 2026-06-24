@@ -399,6 +399,27 @@ func TestAllocAsyncPropagatesDriverError(t *testing.T) {
 	}
 }
 
+// A driver that did not bind the async allocator (older driver) leaves the
+// pointer nil, so AllocAsync and FreeAsync surface ErrSymbolUnavailable.
+func TestAllocAsyncSymbolUnavailable(t *testing.T) {
+	var calls memCalls
+	ctx, stream, _, _ := newAsyncCopyFixture(t, &calls)
+	ctx.driver.CuMemAllocAsync = nil
+	ctx.driver.CuMemFreeAsync = nil
+
+	if _, err := AllocAsync[float32](ctx, stream, 16); !errors.Is(err, ErrSymbolUnavailable) {
+		t.Errorf("AllocAsync err = %v, want ErrSymbolUnavailable", err)
+	}
+	buf, err := Alloc[float32](ctx, 16)
+	if err != nil {
+		t.Fatalf("Alloc: %v", err)
+	}
+	t.Cleanup(func() { _ = buf.Close() })
+	if err := buf.FreeAsync(stream); !errors.Is(err, ErrSymbolUnavailable) {
+		t.Errorf("FreeAsync err = %v, want ErrSymbolUnavailable", err)
+	}
+}
+
 func TestFreeAsyncHappy(t *testing.T) {
 	var calls memCalls
 	ctx, stream, _, _ := newAsyncCopyFixture(t, &calls)

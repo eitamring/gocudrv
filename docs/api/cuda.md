@@ -211,6 +211,10 @@ other async ops, the memory is only valid after the stream reaches the
 allocation point, so do not access it from the host or another stream until
 `Stream.Synchronize` confirms the allocation is ready.
 
+Stream-ordered allocation is bound best-effort (it needs a CUDA 11.2 driver), so
+on an older driver `AllocAsync` and `FreeAsync` return `ErrSymbolUnavailable`.
+Use the synchronous `Alloc` / `Close` path there.
+
 Two free-function wrappers exist for callers who prefer the CUDA-style
 naming:
 
@@ -592,6 +596,10 @@ lower per-launch overhead than submitting each operation again. Capture work on
 a stream, end the capture to get a `Graph`, instantiate it into a `GraphExec`,
 then launch that executable repeatedly.
 
+The graph entry points are bound best-effort (they need a CUDA 11.x driver), so
+on an older driver the capture, instantiate, and launch calls return
+`ErrSymbolUnavailable`.
+
 ```go
 stream.BeginCapture(cuda.CaptureModeThreadLocal)
 fn.LaunchOn(ctx, stream, cfg, args...) // recorded, not run
@@ -649,6 +657,7 @@ ErrSystemDriverMismatch, ErrUnknown
 
 Go-side sentinels:
 
+- `ErrSymbolUnavailable`: an optional feature symbol (async allocation, occupancy, or graphs) was not present in the loaded driver, so that call cannot run. Core APIs are unaffected, so this is local to the feature rather than a load-time failure.
 - `ErrInvalidOrdinal`: `GetDevice` rejected the ordinal before calling CUDA.
 - `ErrNilDevice`: a method was called on a nil `*Device`.
 - `ErrNilContext`: a method was called on a nil `*Context`.
