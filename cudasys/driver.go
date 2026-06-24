@@ -77,30 +77,39 @@ type Driver struct {
 // bindFn is the symbol-binding function used by Load. Overridable in tests.
 var bindFn = bind
 
-// Load binds the v0 set of CUDA driver symbols from lib. If any binding
-// fails, the library is closed before returning the error so callers do not
-// have to track ownership of the handle on the failure path.
+// Load binds the CUDA driver symbols from lib. Every symbol below is resolved
+// at init today, so Load fails on a driver that is missing any of them; see
+// docs/internals.md for the symbol table and the practical minimum driver
+// version. The groups marked as feature symbols (async allocation, occupancy,
+// graphs) are the candidates for optional binding in a later change. If any
+// binding fails, the library is closed before returning the error so callers
+// do not have to track ownership of the handle on the failure path.
 func Load(lib dynload.Library) (*Driver, error) {
 	d := &Driver{lib: lib}
 	binds := []struct {
 		fn   any
 		name string
 	}{
+		// init
 		{&d.CuInit, "cuInit"},
 		{&d.CuDriverGetVersion, "cuDriverGetVersion"},
+		// device discovery and attributes
 		{&d.CuDeviceGetCount, "cuDeviceGetCount"},
 		{&d.CuDeviceGet, "cuDeviceGet"},
 		{&d.CuDeviceGetName, "cuDeviceGetName"},
 		{&d.CuDeviceTotalMem, "cuDeviceTotalMem_v2"},
 		{&d.CuDeviceGetAttribute, "cuDeviceGetAttribute"},
+		// context and primary context
 		{&d.CuCtxGetCurrent, "cuCtxGetCurrent"},
 		{&d.CuCtxSetCurrent, "cuCtxSetCurrent"},
 		{&d.CuCtxSynchronize, "cuCtxSynchronize"},
 		{&d.CuCtxGetStreamPriorityRange, "cuCtxGetStreamPriorityRange"},
 		{&d.CuDevicePrimaryCtxRetain, "cuDevicePrimaryCtxRetain"},
 		{&d.CuDevicePrimaryCtxRelease, "cuDevicePrimaryCtxRelease_v2"},
+		// synchronous device and pinned host memory
 		{&d.CuMemAlloc, "cuMemAlloc_v2"},
 		{&d.CuMemFree, "cuMemFree_v2"},
+		// stream-ordered async allocation (feature, CUDA 11.2+)
 		{&d.CuMemAllocAsync, "cuMemAllocAsync"},
 		{&d.CuMemFreeAsync, "cuMemFreeAsync"},
 		{&d.CuMemGetInfo, "cuMemGetInfo_v2"},
@@ -118,24 +127,30 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuMemsetD32Async, "cuMemsetD32Async"},
 		{&d.CuMemAllocHost, "cuMemAllocHost_v2"},
 		{&d.CuMemFreeHost, "cuMemFreeHost"},
+		// module loading and globals
 		{&d.CuModuleLoadData, "cuModuleLoadData"},
 		{&d.CuModuleUnload, "cuModuleUnload"},
 		{&d.CuModuleGetFunction, "cuModuleGetFunction"},
 		{&d.CuModuleGetGlobal, "cuModuleGetGlobal_v2"},
+		// streams
 		{&d.CuStreamCreate, "cuStreamCreate"},
 		{&d.CuStreamCreateWithPriority, "cuStreamCreateWithPriority"},
 		{&d.CuStreamDestroy, "cuStreamDestroy_v2"},
 		{&d.CuStreamSynchronize, "cuStreamSynchronize"},
 		{&d.CuStreamWaitEvent, "cuStreamWaitEvent"},
+		// events
 		{&d.CuEventCreate, "cuEventCreate"},
 		{&d.CuEventDestroy, "cuEventDestroy_v2"},
 		{&d.CuEventRecord, "cuEventRecord"},
 		{&d.CuEventQuery, "cuEventQuery"},
 		{&d.CuEventSynchronize, "cuEventSynchronize"},
 		{&d.CuEventElapsedTime, "cuEventElapsedTime"},
+		// kernel launch
 		{&d.CuLaunchKernel, "cuLaunchKernel"},
+		// occupancy helpers (feature, CUDA 6.5+)
 		{&d.CuOccupancyMaxActiveBlocksPerMultiprocessor, "cuOccupancyMaxActiveBlocksPerMultiprocessor"},
 		{&d.CuOccupancyMaxPotentialBlockSize, "cuOccupancyMaxPotentialBlockSize"},
+		// graph capture and replay (feature, CUDA 11.x)
 		{&d.CuStreamBeginCapture, "cuStreamBeginCapture_v2"},
 		{&d.CuStreamEndCapture, "cuStreamEndCapture"},
 		{&d.CuGraphInstantiate, "cuGraphInstantiateWithFlags"},

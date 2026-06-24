@@ -100,64 +100,87 @@ type Driver struct {
 }
 ```
 
-`cudasys.Load` binds:
+`cudasys.Load` resolves every symbol below at init. They split into a core
+set the package always needs and a few feature groups that are only used by
+specific APIs. Today all of them are required at init; the feature groups are
+the candidates for optional binding in a later change so that older drivers
+keep working when those features are unused.
 
-- `cuInit`
-- `cuDriverGetVersion`
-- `cuDeviceGetCount`
-- `cuDeviceGet`
-- `cuDeviceGetName`
-- `cuDeviceTotalMem_v2`
-- `cuDeviceGetAttribute`
-- `cuCtxGetCurrent`
-- `cuCtxSetCurrent`
-- `cuCtxSynchronize`
-- `cuCtxGetStreamPriorityRange`
-- `cuDevicePrimaryCtxRetain`
-- `cuDevicePrimaryCtxRelease_v2`
-- `cuMemAlloc_v2`
-- `cuMemFree_v2`
-- `cuMemAllocAsync`
-- `cuMemFreeAsync`
-- `cuMemGetInfo_v2`
-- `cuMemcpyHtoD_v2`
-- `cuMemcpyDtoH_v2`
-- `cuMemcpyDtoD_v2`
-- `cuMemcpyHtoDAsync_v2`
-- `cuMemcpyDtoHAsync_v2`
-- `cuMemcpyDtoDAsync_v2`
-- `cuMemsetD8_v2`
-- `cuMemsetD16_v2`
-- `cuMemsetD32_v2`
-- `cuMemsetD8Async`
-- `cuMemsetD16Async`
-- `cuMemsetD32Async`
-- `cuMemAllocHost_v2`
-- `cuMemFreeHost`
-- `cuModuleLoadData`
-- `cuModuleUnload`
-- `cuModuleGetFunction`
-- `cuModuleGetGlobal_v2`
-- `cuStreamCreate`
-- `cuStreamCreateWithPriority`
-- `cuStreamDestroy_v2`
-- `cuStreamSynchronize`
-- `cuStreamWaitEvent`
-- `cuEventCreate`
-- `cuEventDestroy_v2`
-- `cuEventRecord`
-- `cuEventQuery`
-- `cuEventSynchronize`
-- `cuEventElapsedTime`
-- `cuLaunchKernel`
-- `cuOccupancyMaxActiveBlocksPerMultiprocessor`
-- `cuOccupancyMaxPotentialBlockSize`
-- `cuStreamBeginCapture_v2`
-- `cuStreamEndCapture`
-- `cuGraphInstantiateWithFlags`
-- `cuGraphLaunch`
-- `cuGraphDestroy`
-- `cuGraphExecDestroy`
+Core symbols (always required at init):
+
+| C entry point | `Driver` field | group |
+| --- | --- | --- |
+| `cuInit` | `CuInit` | init |
+| `cuDriverGetVersion` | `CuDriverGetVersion` | init |
+| `cuDeviceGetCount` | `CuDeviceGetCount` | device |
+| `cuDeviceGet` | `CuDeviceGet` | device |
+| `cuDeviceGetName` | `CuDeviceGetName` | device |
+| `cuDeviceTotalMem_v2` | `CuDeviceTotalMem` | device |
+| `cuDeviceGetAttribute` | `CuDeviceGetAttribute` | device |
+| `cuCtxGetCurrent` | `CuCtxGetCurrent` | context |
+| `cuCtxSetCurrent` | `CuCtxSetCurrent` | context |
+| `cuCtxSynchronize` | `CuCtxSynchronize` | context |
+| `cuCtxGetStreamPriorityRange` | `CuCtxGetStreamPriorityRange` | context |
+| `cuDevicePrimaryCtxRetain` | `CuDevicePrimaryCtxRetain` | context |
+| `cuDevicePrimaryCtxRelease_v2` | `CuDevicePrimaryCtxRelease` | context |
+| `cuMemAlloc_v2` | `CuMemAlloc` | memory |
+| `cuMemFree_v2` | `CuMemFree` | memory |
+| `cuMemGetInfo_v2` | `CuMemGetInfo` | memory |
+| `cuMemcpyHtoD_v2` | `CuMemcpyHtoD` | memory |
+| `cuMemcpyDtoH_v2` | `CuMemcpyDtoH` | memory |
+| `cuMemcpyDtoD_v2` | `CuMemcpyDtoD` | memory |
+| `cuMemcpyHtoDAsync_v2` | `CuMemcpyHtoDAsync` | memory |
+| `cuMemcpyDtoHAsync_v2` | `CuMemcpyDtoHAsync` | memory |
+| `cuMemcpyDtoDAsync_v2` | `CuMemcpyDtoDAsync` | memory |
+| `cuMemsetD8_v2` | `CuMemsetD8` | memory |
+| `cuMemsetD16_v2` | `CuMemsetD16` | memory |
+| `cuMemsetD32_v2` | `CuMemsetD32` | memory |
+| `cuMemsetD8Async` | `CuMemsetD8Async` | memory |
+| `cuMemsetD16Async` | `CuMemsetD16Async` | memory |
+| `cuMemsetD32Async` | `CuMemsetD32Async` | memory |
+| `cuMemAllocHost_v2` | `CuMemAllocHost` | memory |
+| `cuMemFreeHost` | `CuMemFreeHost` | memory |
+| `cuModuleLoadData` | `CuModuleLoadData` | module |
+| `cuModuleUnload` | `CuModuleUnload` | module |
+| `cuModuleGetFunction` | `CuModuleGetFunction` | module |
+| `cuModuleGetGlobal_v2` | `CuModuleGetGlobal` | module |
+| `cuStreamCreate` | `CuStreamCreate` | stream |
+| `cuStreamCreateWithPriority` | `CuStreamCreateWithPriority` | stream |
+| `cuStreamDestroy_v2` | `CuStreamDestroy` | stream |
+| `cuStreamSynchronize` | `CuStreamSynchronize` | stream |
+| `cuStreamWaitEvent` | `CuStreamWaitEvent` | stream |
+| `cuEventCreate` | `CuEventCreate` | event |
+| `cuEventDestroy_v2` | `CuEventDestroy` | event |
+| `cuEventRecord` | `CuEventRecord` | event |
+| `cuEventQuery` | `CuEventQuery` | event |
+| `cuEventSynchronize` | `CuEventSynchronize` | event |
+| `cuEventElapsedTime` | `CuEventElapsedTime` | event |
+| `cuLaunchKernel` | `CuLaunchKernel` | launch |
+
+Feature symbols (bound at init today, candidates for optional binding):
+
+| C entry point | `Driver` field | group | since |
+| --- | --- | --- | --- |
+| `cuMemAllocAsync` | `CuMemAllocAsync` | async allocation | CUDA 11.2 |
+| `cuMemFreeAsync` | `CuMemFreeAsync` | async allocation | CUDA 11.2 |
+| `cuOccupancyMaxActiveBlocksPerMultiprocessor` | `CuOccupancyMaxActiveBlocksPerMultiprocessor` | occupancy | CUDA 6.5 |
+| `cuOccupancyMaxPotentialBlockSize` | `CuOccupancyMaxPotentialBlockSize` | occupancy | CUDA 6.5 |
+| `cuStreamBeginCapture_v2` | `CuStreamBeginCapture` | graph | CUDA 11.x |
+| `cuStreamEndCapture` | `CuStreamEndCapture` | graph | CUDA 11.x |
+| `cuGraphInstantiateWithFlags` | `CuGraphInstantiate` | graph | CUDA 11.x |
+| `cuGraphLaunch` | `CuGraphLaunch` | graph | CUDA 11.x |
+| `cuGraphDestroy` | `CuGraphDestroy` | graph | CUDA 11.x |
+| `cuGraphExecDestroy` | `CuGraphExecDestroy` | graph | CUDA 11.x |
+
+### minimum practical driver version
+
+Because every symbol is resolved at init, the practical floor is set by the
+newest entry points in the bound set: the stream-ordered allocator
+(`cuMemAllocAsync` / `cuMemFreeAsync`, CUDA 11.2) and the graph entry points
+(`cuGraphInstantiateWithFlags` and friends, CUDA 11.x). In practice this means
+a driver from the CUDA 11.x series (Linux `R460` or newer). `Load` returns the
+first failing bind error on anything older. Making the feature groups optional
+would lower this floor for callers that do not use async allocation or graphs.
 
 If any bind fails, `Load` closes the library before returning. On successful
 initialization, the package-global `cuda` driver keeps the handle alive.
