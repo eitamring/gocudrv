@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -59,15 +60,45 @@ func main() {
 		if err != nil {
 			fail(fmt.Sprintf("device %d memory bus width", i), err)
 		}
+		l2, err := d.Attribute(cuda.DeviceAttributeL2CacheSize)
+		if err != nil {
+			fail(fmt.Sprintf("device %d l2 cache", i), err)
+		}
+		maxTPM, err := d.Attribute(cuda.DeviceAttributeMaxThreadsPerMultiprocessor)
+		if err != nil {
+			fail(fmt.Sprintf("device %d max threads per sm", i), err)
+		}
+		asyncEngines, err := d.Attribute(cuda.DeviceAttributeAsyncEngineCount)
+		if err != nil {
+			fail(fmt.Sprintf("device %d async engines", i), err)
+		}
 
 		fmt.Printf("\n%d: %s\n", i, name)
+		fmt.Printf("  pci bus id         : %s\n", diag(d.PCIBusID()))
+		fmt.Printf("  uuid               : %s\n", diag(d.UUID()))
 		fmt.Printf("  compute capability : %d.%d\n", maj, min)
 		fmt.Printf("  total memory       : %d MiB\n", mem/(1<<20))
 		fmt.Printf("  multiprocessors    : %d\n", sm)
+		fmt.Printf("  max threads per sm : %d\n", maxTPM)
 		fmt.Printf("  warp size          : %d\n", warp)
 		fmt.Printf("  core clock         : %d MHz\n", clock/1000)
 		fmt.Printf("  memory bus width   : %d bits\n", busWidth)
+		fmt.Printf("  l2 cache           : %d KiB\n", l2/1024)
+		fmt.Printf("  async copy engines : %d\n", asyncEngines)
 	}
+}
+
+// diag renders an optional diagnostic string. A driver too old to export the
+// symbol reports ErrSymbolUnavailable, which is shown as "n/a" rather than
+// treated as a fatal error.
+func diag(s string, err error) string {
+	if errors.Is(err, cuda.ErrSymbolUnavailable) {
+		return "n/a (driver lacks the symbol)"
+	}
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	return s
 }
 
 func fail(op string, err error) {

@@ -48,6 +48,8 @@ type Driver struct {
     CuDeviceGetName           func(name *byte, length int32, dev CUdevice) CUresult
     CuDeviceTotalMem          func(bytes *uint64, dev CUdevice) CUresult
     CuDeviceGetAttribute      func(value *int32, attr int32, dev CUdevice) CUresult
+    CuDeviceGetPCIBusId       func(pciBusId *byte, length int32, dev CUdevice) CUresult
+    CuDeviceGetUuid           func(uuid *byte, dev CUdevice) CUresult
     CuCtxGetCurrent           func(ctx *CUcontext) CUresult
     CuCtxSetCurrent           func(ctx CUcontext) CUresult
     CuCtxSynchronize          func() CUresult
@@ -174,6 +176,8 @@ driver lacks the symbol):
 | `cuGraphLaunch` | `CuGraphLaunch` | graph | CUDA 11.x |
 | `cuGraphDestroy` | `CuGraphDestroy` | graph | CUDA 11.x |
 | `cuGraphExecDestroy` | `CuGraphExecDestroy` | graph | CUDA 11.x |
+| `cuDeviceGetPCIBusId` | `CuDeviceGetPCIBusId` | device diagnostics | CUDA 4.1 |
+| `cuDeviceGetUuid` | `CuDeviceGetUuid` | device diagnostics | CUDA 9.2 |
 
 ### minimum practical driver version
 

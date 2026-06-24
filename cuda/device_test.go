@@ -204,3 +204,62 @@ func TestNilDeviceMethodsAfterInit(t *testing.T) {
 		t.Errorf("Attribute err = %v, want ErrNilDevice", err)
 	}
 }
+
+func TestDevicePCIBusIDAndUUID(t *testing.T) {
+	installDriver(t, &cudasys.Driver{
+		CuDeviceGetCount: func(c *int32) cudasys.CUresult { *c = 1; return cudasys.CUDA_SUCCESS },
+		CuDeviceGet:      func(dev *cudasys.CUdevice, _ int32) cudasys.CUresult { *dev = 0; return cudasys.CUDA_SUCCESS },
+		CuDeviceGetPCIBusId: func(buf *byte, length int32, _ cudasys.CUdevice) cudasys.CUresult {
+			s := "0000:07:00.0"
+			b := unsafeSlice(buf, int(length))
+			copy(b, s)
+			b[len(s)] = 0
+			return cudasys.CUDA_SUCCESS
+		},
+		CuDeviceGetUuid: func(uuid *byte, _ cudasys.CUdevice) cudasys.CUresult {
+			b := unsafeSlice(uuid, 16)
+			for i := range b {
+				b[i] = byte(i + 1)
+			}
+			return cudasys.CUDA_SUCCESS
+		},
+	})
+
+	d, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	bus, err := d.PCIBusID()
+	if err != nil {
+		t.Fatalf("pci bus id: %v", err)
+	}
+	if bus != "0000:07:00.0" {
+		t.Errorf("bus id = %q, want %q", bus, "0000:07:00.0")
+	}
+	uuid, err := d.UUID()
+	if err != nil {
+		t.Fatalf("uuid: %v", err)
+	}
+	if want := "GPU-01020304-0506-0708-090a-0b0c0d0e0f10"; uuid != want {
+		t.Errorf("uuid = %q, want %q", uuid, want)
+	}
+}
+
+func TestDeviceDiagnosticsSymbolUnavailable(t *testing.T) {
+	// A driver that did not bind the diagnostic symbols still yields a Device;
+	// only PCIBusID and UUID report the gap.
+	installDriver(t, &cudasys.Driver{
+		CuDeviceGetCount: func(c *int32) cudasys.CUresult { *c = 1; return cudasys.CUDA_SUCCESS },
+		CuDeviceGet:      func(dev *cudasys.CUdevice, _ int32) cudasys.CUresult { *dev = 0; return cudasys.CUDA_SUCCESS },
+	})
+	d, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if _, err := d.PCIBusID(); !errors.Is(err, ErrSymbolUnavailable) {
+		t.Errorf("PCIBusID err = %v, want ErrSymbolUnavailable", err)
+	}
+	if _, err := d.UUID(); !errors.Is(err, ErrSymbolUnavailable) {
+		t.Errorf("UUID err = %v, want ErrSymbolUnavailable", err)
+	}
+}
