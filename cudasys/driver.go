@@ -48,6 +48,8 @@ type Driver struct {
 	CuMemsetD32Async            func(dst CUdeviceptr, value uint32, count uint64, stream CUstream) CUresult
 	CuMemAllocHost              func(pp **byte, bytesize uint64) CUresult
 	CuMemFreeHost               func(p *byte) CUresult
+	CuMemHostRegister           func(p *byte, bytesize uint64, flags uint32) CUresult
+	CuMemHostUnregister         func(p *byte) CUresult
 	CuModuleLoadData            func(module *CUmodule, image *byte) CUresult
 	CuModuleUnload              func(module CUmodule) CUresult
 	CuModuleGetFunction         func(fn *CUfunction, module CUmodule, name *byte) CUresult
@@ -168,6 +170,9 @@ func Load(lib dynload.Library) (*Driver, error) {
 		// device diagnostics (PCI bus id CUDA 4.1+, uuid CUDA 9.2+)
 		{&d.CuDeviceGetPCIBusId, "cuDeviceGetPCIBusId"},
 		{&d.CuDeviceGetUuid, "cuDeviceGetUuid"},
+		// host memory registration (CUDA 6.5+)
+		{&d.CuMemHostRegister, "cuMemHostRegister_v2"},
+		{&d.CuMemHostUnregister, "cuMemHostUnregister"},
 	}
 	for _, b := range required {
 		if err := bindFn(lib, b.fn, b.name); err != nil {

@@ -151,6 +151,9 @@ func TestViewClosedOwner(t *testing.T) {
 	if _, err := buf.View(0, 4); !errors.Is(err, ErrBufferClosed) {
 		t.Errorf("View on closed buffer = %v, want ErrBufferClosed", err)
 	}
+	if _, err := v.View(0, 2); !errors.Is(err, ErrBufferClosed) {
+		t.Errorf("sub-view of closed owner = %v, want ErrBufferClosed", err)
+	}
 	// The copies must never have reached the driver.
 	if calls.htod.Load() != 0 || calls.dtoh.Load() != 0 {
 		t.Errorf("closed-owner copy reached driver: htod=%d dtoh=%d", calls.htod.Load(), calls.dtoh.Load())
