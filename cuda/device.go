@@ -125,3 +125,33 @@ func (d *Device) Attribute(attr DeviceAttribute) (int, error) {
 	}
 	return cudaresult.DeviceAttribute(driver, int32(attr), d.handle)
 }
+
+// PCIBusID returns the device's PCI bus identifier (domain:bus:device.function,
+// for example "0000:01:00.0"). It returns ErrSymbolUnavailable on a driver that
+// does not export cuDeviceGetPCIBusId.
+func (d *Device) PCIBusID() (string, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	if driver == nil {
+		return "", ErrNotInitialized
+	}
+	if d == nil {
+		return "", ErrNilDevice
+	}
+	return cudaresult.DevicePCIBusID(driver, d.handle)
+}
+
+// UUID returns the device UUID in the canonical "GPU-8-4-4-4-12" hex form that
+// nvidia-smi reports. It returns ErrSymbolUnavailable on a driver that does not
+// export cuDeviceGetUuid.
+func (d *Device) UUID() (string, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	if driver == nil {
+		return "", ErrNotInitialized
+	}
+	if d == nil {
+		return "", ErrNilDevice
+	}
+	return cudaresult.DeviceUUID(driver, d.handle)
+}

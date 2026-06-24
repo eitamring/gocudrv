@@ -21,6 +21,8 @@ type Driver struct {
 	CuDeviceGetName             func(name *byte, length int32, dev CUdevice) CUresult
 	CuDeviceTotalMem            func(bytes *uint64, dev CUdevice) CUresult
 	CuDeviceGetAttribute        func(value *int32, attr int32, dev CUdevice) CUresult
+	CuDeviceGetPCIBusId         func(pciBusId *byte, length int32, dev CUdevice) CUresult
+	CuDeviceGetUuid             func(uuid *byte, dev CUdevice) CUresult
 	CuCtxGetCurrent             func(ctx *CUcontext) CUresult
 	CuCtxSetCurrent             func(ctx CUcontext) CUresult
 	CuCtxSynchronize            func() CUresult
@@ -163,6 +165,9 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuGraphLaunch, "cuGraphLaunch"},
 		{&d.CuGraphDestroy, "cuGraphDestroy"},
 		{&d.CuGraphExecDestroy, "cuGraphExecDestroy"},
+		// device diagnostics (PCI bus id CUDA 4.1+, uuid CUDA 9.2+)
+		{&d.CuDeviceGetPCIBusId, "cuDeviceGetPCIBusId"},
+		{&d.CuDeviceGetUuid, "cuDeviceGetUuid"},
 	}
 	for _, b := range required {
 		if err := bindFn(lib, b.fn, b.name); err != nil {

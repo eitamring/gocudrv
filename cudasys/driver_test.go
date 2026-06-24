@@ -152,6 +152,8 @@ var expectedOptionalOrder = []string{
 	"cuGraphLaunch",
 	"cuGraphDestroy",
 	"cuGraphExecDestroy",
+	"cuDeviceGetPCIBusId",
+	"cuDeviceGetUuid",
 }
 
 func TestLoadBindsExpectedSymbolsInOrder(t *testing.T) {

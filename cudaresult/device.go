@@ -2,11 +2,15 @@ package cudaresult
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/eitamring/gocudrv/cudasys"
 )
 
-const deviceNameBufferLen = 256
+const (
+	deviceNameBufferLen = 256
+	pciBusIDBufferLen   = 16
+)
 
 // DeviceCount calls cuDeviceGetCount through d.
 func DeviceCount(d *cudasys.Driver) (int, error) {
@@ -72,4 +76,42 @@ func DeviceAttribute(d *cudasys.Driver, attr int32, dev cudasys.CUdevice) (int, 
 		return 0, err
 	}
 	return int(v), nil
+}
+
+// DevicePCIBusID returns the PCI bus identifier string (domain:bus:device.function,
+// for example "0000:01:00.0") via cuDeviceGetPCIBusId. The symbol is bound
+// best-effort, so this returns ErrSymbolUnavailable on a driver that lacks it.
+func DevicePCIBusID(d *cudasys.Driver, dev cudasys.CUdevice) (string, error) {
+	if d == nil {
+		return "", ErrNotInitialized
+	}
+	if d.CuDeviceGetPCIBusId == nil {
+		return "", ErrSymbolUnavailable
+	}
+	buf := make([]byte, pciBusIDBufferLen)
+	if err := check("cuDeviceGetPCIBusId", d.CuDeviceGetPCIBusId(&buf[0], int32(len(buf)), dev)); err != nil {
+		return "", err
+	}
+	if i := bytes.IndexByte(buf, 0); i >= 0 {
+		return string(buf[:i]), nil
+	}
+	return string(buf), nil
+}
+
+// DeviceUUID returns the device UUID via cuDeviceGetUuid, formatted in the
+// canonical "GPU-8-4-4-4-12" hex form that nvidia-smi reports. The symbol is
+// bound best-effort, so this returns ErrSymbolUnavailable on a driver that
+// lacks it.
+func DeviceUUID(d *cudasys.Driver, dev cudasys.CUdevice) (string, error) {
+	if d == nil {
+		return "", ErrNotInitialized
+	}
+	if d.CuDeviceGetUuid == nil {
+		return "", ErrSymbolUnavailable
+	}
+	var raw [16]byte
+	if err := check("cuDeviceGetUuid", d.CuDeviceGetUuid(&raw[0], dev)); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("GPU-%x-%x-%x-%x-%x", raw[0:4], raw[4:6], raw[6:8], raw[8:10], raw[10:16]), nil
 }

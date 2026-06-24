@@ -262,3 +262,105 @@ func TestDeviceAttribute(t *testing.T) {
 		})
 	}
 }
+
+func TestDevicePCIBusID(t *testing.T) {
+	writeBus := func(s string) func(buf *byte, length int32, dev cudasys.CUdevice) cudasys.CUresult {
+		return func(buf *byte, length int32, _ cudasys.CUdevice) cudasys.CUresult {
+			b := unsafeSliceFromPtr(buf, int(length))
+			copy(b, s)
+			if len(s) < len(b) {
+				b[len(s)] = 0
+			}
+			return cudasys.CUDA_SUCCESS
+		}
+	}
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		want    string
+		wantErr error
+	}{
+		{"nil driver", nil, "", ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, "", ErrSymbolUnavailable},
+		{
+			"success",
+			&cudasys.Driver{CuDeviceGetPCIBusId: writeBus("0000:01:00.0")},
+			"0000:01:00.0",
+			nil,
+		},
+		{
+			"error",
+			&cudasys.Driver{CuDeviceGetPCIBusId: func(*byte, int32, cudasys.CUdevice) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_DEVICE
+			}},
+			"",
+			ErrInvalidDevice,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := DevicePCIBusID(tc.driver, 0)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Errorf("err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("bus id = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDeviceUUID(t *testing.T) {
+	cases := []struct {
+		name    string
+		driver  *cudasys.Driver
+		want    string
+		wantErr error
+	}{
+		{"nil driver", nil, "", ErrNotInitialized},
+		{"nil func", &cudasys.Driver{}, "", ErrSymbolUnavailable},
+		{
+			"success",
+			&cudasys.Driver{CuDeviceGetUuid: func(uuid *byte, _ cudasys.CUdevice) cudasys.CUresult {
+				b := unsafeSliceFromPtr(uuid, 16)
+				for i := range b {
+					b[i] = byte(i + 1)
+				}
+				return cudasys.CUDA_SUCCESS
+			}},
+			"GPU-01020304-0506-0708-090a-0b0c0d0e0f10",
+			nil,
+		},
+		{
+			"error",
+			&cudasys.Driver{CuDeviceGetUuid: func(*byte, cudasys.CUdevice) cudasys.CUresult {
+				return cudasys.CUDA_ERROR_INVALID_DEVICE
+			}},
+			"",
+			ErrInvalidDevice,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := DeviceUUID(tc.driver, 0)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Errorf("err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("uuid = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
