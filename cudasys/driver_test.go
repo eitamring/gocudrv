@@ -156,6 +156,9 @@ var expectedOptionalOrder = []string{
 	"cuDeviceGetUuid",
 	"cuMemHostRegister_v2",
 	"cuMemHostUnregister",
+	"cuMemAllocPitch_v2",
+	"cuMemcpy2D_v2",
+	"cuMemcpy2DAsync_v2",
 }
 
 func TestLoadBindsExpectedSymbolsInOrder(t *testing.T) {

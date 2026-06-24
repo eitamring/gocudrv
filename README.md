@@ -7,8 +7,8 @@ Status: very early. The current API covers initialization, device discovery,
 primary contexts, memory, module loading, kernel launch, explicit streams,
 events, async pinned copies, device memory primitives (memset, typed fill,
 device-to-device copy, free/total query), buffer subrange (offset) copies,
-non-owning buffer views, host memory registration, occupancy helpers, device
-global access, CUDA graph capture and replay, stream-ordered async allocation,
+non-owning buffer views, host memory registration, pitched 2D allocation and
+copies, occupancy helpers, device global access, CUDA graph capture and replay, stream-ordered async allocation,
 device diagnostics (PCI bus id, UUID, and more attributes), and raw handle
 accessors for sibling-module integration.
 

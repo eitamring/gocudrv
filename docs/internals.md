@@ -77,6 +77,9 @@ type Driver struct {
     CuMemFreeHost             func(p *byte) CUresult
     CuMemHostRegister         func(p *byte, bytesize uint64, flags uint32) CUresult
     CuMemHostUnregister       func(p *byte) CUresult
+    CuMemAllocPitch           func(dptr *CUdeviceptr, pitch *uint64, widthInBytes, height uint64, elementSizeBytes uint32) CUresult
+    CuMemcpy2D                func(pCopy *Memcpy2D) CUresult
+    CuMemcpy2DAsync           func(pCopy *Memcpy2D, stream CUstream) CUresult
     CuModuleLoadData          func(module *CUmodule, image *byte) CUresult
     CuModuleUnload            func(module CUmodule) CUresult
     CuModuleGetFunction       func(fn *CUfunction, module CUmodule, name *byte) CUresult
@@ -182,6 +185,9 @@ driver lacks the symbol):
 | `cuDeviceGetUuid` | `CuDeviceGetUuid` | device diagnostics | CUDA 9.2 |
 | `cuMemHostRegister_v2` | `CuMemHostRegister` | host registration | CUDA 6.5 |
 | `cuMemHostUnregister` | `CuMemHostUnregister` | host registration | CUDA 6.5 |
+| `cuMemAllocPitch_v2` | `CuMemAllocPitch` | pitched memory | CUDA 3.2 |
+| `cuMemcpy2D_v2` | `CuMemcpy2D` | pitched memory | CUDA 3.2 |
+| `cuMemcpy2DAsync_v2` | `CuMemcpy2DAsync` | pitched memory | CUDA 3.2 |
 
 ### minimum practical driver version
 
