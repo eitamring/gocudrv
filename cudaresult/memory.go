@@ -191,3 +191,28 @@ func MemFreeHost(d *cudasys.Driver, p *byte) error {
 	}
 	return check("cuMemFreeHost", d.CuMemFreeHost(p))
 }
+
+// MemHostRegister page-locks bytes of caller-owned host memory at p, with the
+// given cuMemHostRegister flags. The symbol is bound best-effort, so this
+// returns ErrSymbolUnavailable on a driver that lacks it.
+func MemHostRegister(d *cudasys.Driver, p *byte, bytes uint64, flags uint32) error {
+	if d == nil {
+		return ErrNotInitialized
+	}
+	if d.CuMemHostRegister == nil {
+		return ErrSymbolUnavailable
+	}
+	return check("cuMemHostRegister_v2", d.CuMemHostRegister(p, bytes, flags))
+}
+
+// MemHostUnregister unregisters host memory previously page-locked with
+// MemHostRegister.
+func MemHostUnregister(d *cudasys.Driver, p *byte) error {
+	if d == nil {
+		return ErrNotInitialized
+	}
+	if d.CuMemHostUnregister == nil {
+		return ErrSymbolUnavailable
+	}
+	return check("cuMemHostUnregister", d.CuMemHostUnregister(p))
+}

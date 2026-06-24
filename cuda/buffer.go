@@ -511,10 +511,12 @@ func (b *Buffer[T]) CopyToDevice(ctx context.Context, dst *Buffer[T]) error {
 	if b.closed {
 		return ErrBufferClosed
 	}
-	dst.opMu.RLock()
-	defer dst.opMu.RUnlock()
-	if dst.closed {
-		return ErrBufferClosed
+	if dst != b {
+		dst.opMu.RLock()
+		defer dst.opMu.RUnlock()
+		if dst.closed {
+			return ErrBufferClosed
+		}
 	}
 	if dst.ctx != b.ctx {
 		return ErrContextMismatch
@@ -549,10 +551,12 @@ func (b *Buffer[T]) CopyToDeviceAsync(ctx context.Context, stream *Stream, dst *
 	if b.closed {
 		return ErrBufferClosed
 	}
-	dst.opMu.RLock()
-	defer dst.opMu.RUnlock()
-	if dst.closed {
-		return ErrBufferClosed
+	if dst != b {
+		dst.opMu.RLock()
+		defer dst.opMu.RUnlock()
+		if dst.closed {
+			return ErrBufferClosed
+		}
 	}
 	if stream.ctx != b.ctx || dst.ctx != b.ctx {
 		return ErrContextMismatch

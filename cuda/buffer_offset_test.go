@@ -171,3 +171,29 @@ func TestOffsetCopyRejects(t *testing.T) {
 			calls.htod.Load(), calls.dtoh.Load(), calls.dtod.Load())
 	}
 }
+
+// TestCopyToDeviceAtSelfCopy exercises the dst==b alias path: an in-place
+// subrange copy must not take a second read lock on the buffer (which can
+// deadlock against a concurrent Close).
+func TestCopyToDeviceAtSelfCopy(t *testing.T) {
+	var calls memCalls
+	ctx := newOffsetContext(t, &calls)
+	buf, err := Alloc[float32](ctx, 16)
+	if err != nil {
+		t.Fatalf("Alloc: %v", err)
+	}
+	t.Cleanup(func() { _ = buf.Close() })
+
+	if err := buf.CopyToDeviceAt(context.Background(), 0, buf, 8, 4); err != nil {
+		t.Fatalf("self CopyToDeviceAt: %v", err)
+	}
+	if calls.dtod.Load() != 1 {
+		t.Errorf("dtod = %d, want 1", calls.dtod.Load())
+	}
+	if got, want := calls.lastSrc.Load(), uintptr(offsetBase+8*4); got != want {
+		t.Errorf("src = %#x, want %#x", got, want)
+	}
+	if got, want := calls.lastDst.Load(), uintptr(offsetBase+0); got != want {
+		t.Errorf("dst = %#x, want %#x", got, want)
+	}
+}

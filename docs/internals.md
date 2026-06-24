@@ -75,6 +75,8 @@ type Driver struct {
     CuMemsetD32Async          func(dst CUdeviceptr, value uint32, count uint64, stream CUstream) CUresult
     CuMemAllocHost            func(pp **byte, bytesize uint64) CUresult
     CuMemFreeHost             func(p *byte) CUresult
+    CuMemHostRegister         func(p *byte, bytesize uint64, flags uint32) CUresult
+    CuMemHostUnregister       func(p *byte) CUresult
     CuModuleLoadData          func(module *CUmodule, image *byte) CUresult
     CuModuleUnload            func(module CUmodule) CUresult
     CuModuleGetFunction       func(fn *CUfunction, module CUmodule, name *byte) CUresult
@@ -178,6 +180,8 @@ driver lacks the symbol):
 | `cuGraphExecDestroy` | `CuGraphExecDestroy` | graph | CUDA 11.x |
 | `cuDeviceGetPCIBusId` | `CuDeviceGetPCIBusId` | device diagnostics | CUDA 4.1 |
 | `cuDeviceGetUuid` | `CuDeviceGetUuid` | device diagnostics | CUDA 9.2 |
+| `cuMemHostRegister_v2` | `CuMemHostRegister` | host registration | CUDA 6.5 |
+| `cuMemHostUnregister` | `CuMemHostUnregister` | host registration | CUDA 6.5 |
 
 ### minimum practical driver version
 

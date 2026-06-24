@@ -926,3 +926,55 @@ func TestMemsetD32Async(t *testing.T) {
 		})
 	}
 }
+
+func TestMemHostRegister(t *testing.T) {
+	var b byte
+	if err := MemHostRegister(nil, &b, 16, 0); !errors.Is(err, ErrNotInitialized) {
+		t.Errorf("nil driver = %v, want ErrNotInitialized", err)
+	}
+	if err := MemHostRegister(&cudasys.Driver{}, &b, 16, 0); !errors.Is(err, ErrSymbolUnavailable) {
+		t.Errorf("nil func = %v, want ErrSymbolUnavailable", err)
+	}
+
+	var gotBytes uint64
+	var gotFlags uint32
+	d := &cudasys.Driver{CuMemHostRegister: func(p *byte, bytes uint64, flags uint32) cudasys.CUresult {
+		if p != &b {
+			t.Error("pointer mismatch")
+		}
+		gotBytes, gotFlags = bytes, flags
+		return cudasys.CUDA_SUCCESS
+	}}
+	if err := MemHostRegister(d, &b, 64, 1); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if gotBytes != 64 || gotFlags != 1 {
+		t.Errorf("bytes=%d flags=%d, want 64, 1", gotBytes, gotFlags)
+	}
+
+	dErr := &cudasys.Driver{CuMemHostRegister: func(*byte, uint64, uint32) cudasys.CUresult {
+		return cudasys.CUDA_ERROR_INVALID_VALUE
+	}}
+	if err := MemHostRegister(dErr, &b, 16, 0); !errors.Is(err, ErrInvalidValue) {
+		t.Errorf("err = %v, want ErrInvalidValue", err)
+	}
+}
+
+func TestMemHostUnregister(t *testing.T) {
+	var b byte
+	if err := MemHostUnregister(nil, &b); !errors.Is(err, ErrNotInitialized) {
+		t.Errorf("nil driver = %v, want ErrNotInitialized", err)
+	}
+	if err := MemHostUnregister(&cudasys.Driver{}, &b); !errors.Is(err, ErrSymbolUnavailable) {
+		t.Errorf("nil func = %v, want ErrSymbolUnavailable", err)
+	}
+	d := &cudasys.Driver{CuMemHostUnregister: func(p *byte) cudasys.CUresult {
+		if p != &b {
+			t.Error("pointer mismatch")
+		}
+		return cudasys.CUDA_SUCCESS
+	}}
+	if err := MemHostUnregister(d, &b); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+}

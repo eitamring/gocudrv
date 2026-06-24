@@ -48,6 +48,11 @@ func (v *View[T]) View(offset, n int) (*View[T], error) {
 	if v == nil || v.owner == nil {
 		return nil, ErrNilBuffer
 	}
+	v.owner.opMu.RLock()
+	defer v.owner.opMu.RUnlock()
+	if v.owner.closed {
+		return nil, ErrBufferClosed
+	}
 	if offset < 0 || n <= 0 {
 		return nil, ErrInvalidLength
 	}
