@@ -244,6 +244,31 @@ The async memset and device-to-device copies (offset and whole-buffer) follow
 the same lifetime rule as the async host copies: do not close the buffers or the
 stream until `Stream.Synchronize` confirms the work is done.
 
+### views
+
+A `View[T]` is a non-owning window into a region of a `Buffer`. It lets a
+higher-level library pass a slice of a buffer without duplicating ownership or
+risking a double free. A view has no `Close`; the memory is freed only when the
+owning `Buffer` is closed.
+
+- `(*Buffer[T]).View(offset, n int) (*View[T], error)` returns a view of `n`
+  elements starting at `offset`. Same validation as the offset copies
+  (`ErrInvalidLength` / `ErrOutOfRange`), and the buffer must be open.
+- `(*View[T]).View(offset, n int) (*View[T], error)` re-slices into a sub-view of
+  the same owner.
+- `(*View[T]).Len() int`, `(*View[T]).Bytes() uint64`, and
+  `(*View[T]).DevicePtr() cudasys.CUdeviceptr` report the view's extent and
+  device pointer (the pointer is a raw snapshot, like `Buffer.DevicePtr`).
+- `(*View[T]).CopyFrom(ctx, src []T) error` and `(*View[T]).CopyTo(ctx, dst []T) error`
+  copy between the host and the view; the slice length must equal the view
+  length.
+
+Views are non-owning by construction: they carry no finalizer and expose no
+`Close`. Because copies run through the owner, once the owning `Buffer` is closed
+every view operation returns `ErrBufferClosed`. `Buffer.Close` is unchanged. For
+a host-side subrange, slice the `HostBuffer.Slice()` result directly; a separate
+host view type is not provided.
+
 `AllocAsync` and `FreeAsync` are the stream-ordered counterparts of `Alloc` and
 `Close`. Allocation, use, and free are ordered on the same stream, so a buffer
 returned by `AllocAsync` is safe to use in later work queued on that stream
