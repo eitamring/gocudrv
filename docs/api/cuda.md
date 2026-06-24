@@ -45,9 +45,15 @@ sms, err := d.Attribute(cuda.DeviceAttributeMultiprocessorCount)
 - `(*Device).TotalMemory() (uint64, error)`
 - `(*Device).ComputeCapability() (major, minor int, err error)`
 - `(*Device).Attribute(attr DeviceAttribute) (int, error)`
+- `(*Device).PCIBusID() (string, error)` is the PCI bus identifier
+  (`domain:bus:device.function`, for example `0000:01:00.0`).
+- `(*Device).UUID() (string, error)` is the device UUID in the canonical
+  `GPU-8-4-4-4-12` hex form that nvidia-smi reports.
 
 `Ordinal` returns `-1` for a nil `*Device`. The methods that return errors
 return `ErrNilDevice` for a nil `*Device` once the driver is initialized.
+`PCIBusID` and `UUID` are backed by best-effort bound symbols, so they return
+`ErrSymbolUnavailable` on a driver too old to export them.
 
 ## attributes
 
@@ -57,15 +63,33 @@ values. Named attributes currently exposed:
 | constant | value |
 | --- | --- |
 | `DeviceAttributeMaxThreadsPerBlock` | 1 |
+| `DeviceAttributeMaxBlockDimX` / `Y` / `Z` | 2, 3, 4 |
+| `DeviceAttributeMaxGridDimX` / `Y` / `Z` | 5, 6, 7 |
+| `DeviceAttributeMaxSharedMemoryPerBlock` | 8 |
+| `DeviceAttributeTotalConstantMemory` | 9 |
 | `DeviceAttributeWarpSize` | 10 |
+| `DeviceAttributeMaxRegistersPerBlock` | 12 |
 | `DeviceAttributeClockRate` | 13 |
 | `DeviceAttributeMultiprocessorCount` | 16 |
 | `DeviceAttributeIntegrated` | 18 |
+| `DeviceAttributeCanMapHostMemory` | 19 |
+| `DeviceAttributeComputeMode` | 20 |
 | `DeviceAttributeConcurrentKernels` | 31 |
+| `DeviceAttributePCIBusID` | 33 |
+| `DeviceAttributePCIDeviceID` | 34 |
+| `DeviceAttributeTCCDriver` | 35 |
 | `DeviceAttributeMemoryClockRate` | 36 |
 | `DeviceAttributeGlobalMemoryBusWidth` | 37 |
+| `DeviceAttributeL2CacheSize` | 38 |
+| `DeviceAttributeMaxThreadsPerMultiprocessor` | 39 |
+| `DeviceAttributeAsyncEngineCount` | 40 |
+| `DeviceAttributeUnifiedAddressing` | 41 |
+| `DeviceAttributePCIDomainID` | 50 |
 | `DeviceAttributeComputeCapabilityMajor` | 75 |
 | `DeviceAttributeComputeCapabilityMinor` | 76 |
+| `DeviceAttributeMaxSharedMemoryPerMultiprocessor` | 81 |
+| `DeviceAttributeMaxRegistersPerMultiprocessor` | 82 |
+| `DeviceAttributeManagedMemory` | 83 |
 
 Pass `cuda.DeviceAttribute(value)` for CUDA attributes not yet named.
 
@@ -629,6 +653,32 @@ stream.Synchronize(ctx)
 must be closed before it. The buffers, module, and arguments referenced by the
 captured work must stay alive and unchanged for as long as the `GraphExec` may
 be launched.
+
+## raw handles (advanced)
+
+These accessors expose the underlying CUDA driver handles so a sibling module
+(for example a cuBLAS, cuDNN, or TensorRT binding) can share this package's
+context, streams, events, and device buffers instead of creating its own. They
+return `cudasys` types directly.
+
+- `(*Context).Raw() cudasys.CUcontext` is the primary context handle.
+- `(*Context).Driver() *cudasys.Driver` is the loaded driver with every bound
+  entry point, so a sibling can issue driver calls through the library gocudrv
+  already opened instead of loading `libcuda` a second time.
+- `(*Stream).Raw() cudasys.CUstream` is the stream handle.
+- `(*Event).Raw() cudasys.CUevent` is the event handle.
+- `(*Buffer[T]).DevicePtr() cudasys.CUdeviceptr` is the device pointer; pair it
+  with `Len` and `Bytes` for the element count and byte size.
+
+Each returns the zero value (or nil) on a nil receiver.
+
+**These bypass the safety guarantees of the typed API.** A handle is valid only
+while the Go value that owns it is open; using one after `Close` is undefined
+behavior that gocudrv cannot detect. CUDA's current context is per OS thread, so
+any raw driver call you make yourself must ensure the right context is current on
+the calling thread (the typed API does this on its pinned executor). The returned
+handle is a snapshot and is not protected by the type's lock. Prefer the typed
+methods; reach for these only when handing a raw handle to other CUDA code.
 
 ## errors
 
