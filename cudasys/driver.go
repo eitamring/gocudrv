@@ -50,6 +50,9 @@ type Driver struct {
 	CuMemFreeHost               func(p *byte) CUresult
 	CuMemHostRegister           func(p *byte, bytesize uint64, flags uint32) CUresult
 	CuMemHostUnregister         func(p *byte) CUresult
+	CuMemAllocPitch             func(dptr *CUdeviceptr, pitch *uint64, widthInBytes uint64, height uint64, elementSizeBytes uint32) CUresult
+	CuMemcpy2D                  func(pCopy *Memcpy2D) CUresult
+	CuMemcpy2DAsync             func(pCopy *Memcpy2D, stream CUstream) CUresult
 	CuModuleLoadData            func(module *CUmodule, image *byte) CUresult
 	CuModuleUnload              func(module CUmodule) CUresult
 	CuModuleGetFunction         func(fn *CUfunction, module CUmodule, name *byte) CUresult
@@ -173,6 +176,10 @@ func Load(lib dynload.Library) (*Driver, error) {
 		// host memory registration (CUDA 6.5+)
 		{&d.CuMemHostRegister, "cuMemHostRegister_v2"},
 		{&d.CuMemHostUnregister, "cuMemHostUnregister"},
+		// pitched allocation and 2D copies (CUDA 3.2+)
+		{&d.CuMemAllocPitch, "cuMemAllocPitch_v2"},
+		{&d.CuMemcpy2D, "cuMemcpy2D_v2"},
+		{&d.CuMemcpy2DAsync, "cuMemcpy2DAsync_v2"},
 	}
 	for _, b := range required {
 		if err := bindFn(lib, b.fn, b.name); err != nil {
