@@ -29,6 +29,8 @@ type memCalls struct {
 	lastSize    atomic.Uint64
 	lastStream  atomic.Uintptr
 	lastVal     atomic.Uint64
+	lastDst     atomic.Uintptr
+	lastSrc     atomic.Uintptr
 }
 
 func fakeMemoryDriver(c *memCalls, basePtr uint64) *cudasys.Driver {
@@ -68,30 +70,44 @@ func fakeMemoryDriver(c *memCalls, basePtr uint64) *cudasys.Driver {
 			c.lastStream.Store(uintptr(stream))
 			return cudasys.CUDA_SUCCESS
 		},
-		CuMemcpyHtoD: func(_ cudasys.CUdeviceptr, _ *byte, _ uint64) cudasys.CUresult {
+		CuMemcpyHtoD: func(dst cudasys.CUdeviceptr, _ *byte, n uint64) cudasys.CUresult {
 			c.htod.Add(1)
+			c.lastDst.Store(uintptr(dst))
+			c.lastSize.Store(n)
 			return cudasys.CUDA_SUCCESS
 		},
-		CuMemcpyDtoH: func(_ *byte, _ cudasys.CUdeviceptr, _ uint64) cudasys.CUresult {
+		CuMemcpyDtoH: func(_ *byte, src cudasys.CUdeviceptr, n uint64) cudasys.CUresult {
 			c.dtoh.Add(1)
+			c.lastSrc.Store(uintptr(src))
+			c.lastSize.Store(n)
 			return cudasys.CUDA_SUCCESS
 		},
-		CuMemcpyHtoDAsync: func(_ cudasys.CUdeviceptr, _ *byte, _ uint64, stream cudasys.CUstream) cudasys.CUresult {
+		CuMemcpyHtoDAsync: func(dst cudasys.CUdeviceptr, _ *byte, n uint64, stream cudasys.CUstream) cudasys.CUresult {
 			c.htodAsync.Add(1)
+			c.lastDst.Store(uintptr(dst))
+			c.lastSize.Store(n)
 			c.lastStream.Store(uintptr(stream))
 			return cudasys.CUDA_SUCCESS
 		},
-		CuMemcpyDtoHAsync: func(_ *byte, _ cudasys.CUdeviceptr, _ uint64, stream cudasys.CUstream) cudasys.CUresult {
+		CuMemcpyDtoHAsync: func(_ *byte, src cudasys.CUdeviceptr, n uint64, stream cudasys.CUstream) cudasys.CUresult {
 			c.dtohAsync.Add(1)
+			c.lastSrc.Store(uintptr(src))
+			c.lastSize.Store(n)
 			c.lastStream.Store(uintptr(stream))
 			return cudasys.CUDA_SUCCESS
 		},
-		CuMemcpyDtoD: func(_, _ cudasys.CUdeviceptr, _ uint64) cudasys.CUresult {
+		CuMemcpyDtoD: func(dst, src cudasys.CUdeviceptr, n uint64) cudasys.CUresult {
 			c.dtod.Add(1)
+			c.lastDst.Store(uintptr(dst))
+			c.lastSrc.Store(uintptr(src))
+			c.lastSize.Store(n)
 			return cudasys.CUDA_SUCCESS
 		},
-		CuMemcpyDtoDAsync: func(_, _ cudasys.CUdeviceptr, _ uint64, stream cudasys.CUstream) cudasys.CUresult {
+		CuMemcpyDtoDAsync: func(dst, src cudasys.CUdeviceptr, n uint64, stream cudasys.CUstream) cudasys.CUresult {
 			c.dtodAsync.Add(1)
+			c.lastDst.Store(uintptr(dst))
+			c.lastSrc.Store(uintptr(src))
+			c.lastSize.Store(n)
 			c.lastStream.Store(uintptr(stream))
 			return cudasys.CUDA_SUCCESS
 		},

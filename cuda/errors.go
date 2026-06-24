@@ -15,6 +15,7 @@ var (
 	ErrBufferClosed          = errors.New("cuda: buffer is closed")
 	ErrLengthMismatch        = errors.New("cuda: length mismatch")
 	ErrInvalidLength         = errors.New("cuda: invalid length")
+	ErrOutOfRange            = errors.New("cuda: copy range out of bounds")
 	ErrNilModule             = errors.New("cuda: nil module")
 	ErrModuleClosed          = errors.New("cuda: module is closed")
 	ErrEmptyImage            = errors.New("cuda: empty module image")
