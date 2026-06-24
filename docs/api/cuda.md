@@ -222,9 +222,27 @@ if err := buf.CopyTo(bg, dst); err != nil {
 - `(*Buffer[T]).CopyToDeviceAsync(ctx context.Context, stream *Stream, dst *Buffer[T]) error`
   enqueues a device-to-device copy on `stream`.
 
-The async memset and device-to-device copy follow the same lifetime rule as the
-async host copies: do not close the buffers or the stream until
-`Stream.Synchronize` confirms the work is done.
+### offset copies
+
+These copy a subrange instead of the whole buffer, so a tensor or image
+consumer can move a slice without a temporary buffer. The offset and count are
+in elements, not bytes, and out-of-range requests are rejected before any CUDA
+call: a negative offset or non-positive count returns `ErrInvalidLength`, and a
+range that does not fit returns `ErrOutOfRange`.
+
+- `(*Buffer[T]).CopyFromAt(ctx, dstOffset int, src []T) error` copies `len(src)`
+  elements from the host slice into the buffer starting at `dstOffset`.
+- `(*Buffer[T]).CopyToAt(ctx, dst []T, srcOffset int) error` copies `len(dst)`
+  elements from the buffer starting at `srcOffset` into the host slice.
+- `(*Buffer[T]).CopyToDeviceAt(ctx, dstOffset int, dst *Buffer[T], srcOffset, n int) error`
+  copies `n` elements from `srcOffset` in this buffer to `dstOffset` in `dst`
+  (same context).
+- `(*Buffer[T]).CopyToDeviceAtAsync(ctx, stream *Stream, dstOffset int, dst *Buffer[T], srcOffset, n int) error`
+  enqueues that device-to-device offset copy on `stream`.
+
+The async memset and device-to-device copies (offset and whole-buffer) follow
+the same lifetime rule as the async host copies: do not close the buffers or the
+stream until `Stream.Synchronize` confirms the work is done.
 
 `AllocAsync` and `FreeAsync` are the stream-ordered counterparts of `Alloc` and
 `Close`. Allocation, use, and free are ordered on the same stream, so a buffer
@@ -715,7 +733,8 @@ Go-side sentinels:
 - `ErrNilBuffer`: a method was called on a nil `*Buffer[T]` or nil `*HostBuffer[T]`.
 - `ErrBufferClosed`: a method was called on a `*Buffer[T]` or `*HostBuffer[T]` after `Close`.
 - `ErrLengthMismatch`: a copy was given mismatched or empty slices/buffers.
-- `ErrInvalidLength`: `Alloc` or `AllocHost` was given a non-positive or overflowing element count.
+- `ErrInvalidLength`: `Alloc` or `AllocHost` was given a non-positive or overflowing element count, or an offset copy was given a negative offset or non-positive count.
+- `ErrOutOfRange`: an offset copy's range (offset plus count) does not fit the buffer.
 - `ErrNilModule`: a method was called on a nil `*Module`.
 - `ErrModuleClosed`: a method was called on a `*Module` after `Close`.
 - `ErrEmptyImage`: `LoadModule` was given a nil or empty image, or `LoadModuleFromFile` was given an empty path.
