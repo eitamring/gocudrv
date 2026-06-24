@@ -413,6 +413,32 @@ one-off copies the pageable path is fine.
 Lifetime rule mirrors `Buffer`: a `HostBuffer` must be closed before its
 owning `Context` is closed.
 
+## pitched memory
+
+`PitchedBuffer[T]` is a 2D device allocation whose rows are padded to a
+driver-chosen pitch so each row starts at an aligned address (faster than a
+packed allocation for 2D access). `Width` and `Height` are in elements; `Pitch`
+is the row stride in bytes, at least `Width*sizeof(T)`.
+
+- `func AllocPitched[T Supported](ctx *Context, width, height int) (*PitchedBuffer[T], error)`
+  allocates with `cuMemAllocPitch`. Rejects a nil context, non-positive
+  dimensions, and byte overflow; returns `ErrSymbolUnavailable` on a driver
+  without the symbol.
+- `(*PitchedBuffer[T]).Width()`, `Height()`, `Pitch()`, `DevicePtr()` report the
+  geometry and device pointer.
+- `(*PitchedBuffer[T]).CopyFrom(ctx, src []T)` and `CopyTo(ctx, dst []T)` move a
+  packed host slice of `Width*Height` elements to and from the buffer, adding and
+  dropping the row padding (`cuMemcpy2D`). The slice length must equal
+  `Width*Height`.
+- `(*PitchedBuffer[T]).CopyToDevice(ctx, dst *PitchedBuffer[T])` copies into
+  another pitched buffer of equal `Width` and `Height` in the same context;
+  their pitches may differ.
+- `(*PitchedBuffer[T]).Close()` frees with `cuMemFree`. Idempotent.
+
+The 2D copies use the `CUDA_MEMCPY2D` descriptor, so host rows are treated as
+packed (`Pitch == Width*sizeof(T)`) while device rows use the allocation pitch.
+This stays a generic CUDA primitive: no image or tensor semantics are implied.
+
 ## streams
 
 `Stream` is an ordered queue of GPU work owned by a `Context`. New streams are
