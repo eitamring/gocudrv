@@ -147,3 +147,139 @@ func TestCloseOnNilReceiverAndEmptyDriver(t *testing.T) {
 		t.Errorf("empty driver: got %v, want nil", err)
 	}
 }
+
+// expectedBindOrder is the exact sequence of driver symbols Load resolves. It
+// mirrors the table in docs/internals.md; update both together when the bound
+// surface changes.
+var expectedBindOrder = []string{
+	"cuInit",
+	"cuDriverGetVersion",
+	"cuDeviceGetCount",
+	"cuDeviceGet",
+	"cuDeviceGetName",
+	"cuDeviceTotalMem_v2",
+	"cuDeviceGetAttribute",
+	"cuCtxGetCurrent",
+	"cuCtxSetCurrent",
+	"cuCtxSynchronize",
+	"cuCtxGetStreamPriorityRange",
+	"cuDevicePrimaryCtxRetain",
+	"cuDevicePrimaryCtxRelease_v2",
+	"cuMemAlloc_v2",
+	"cuMemFree_v2",
+	"cuMemAllocAsync",
+	"cuMemFreeAsync",
+	"cuMemGetInfo_v2",
+	"cuMemcpyHtoD_v2",
+	"cuMemcpyDtoH_v2",
+	"cuMemcpyDtoD_v2",
+	"cuMemcpyHtoDAsync_v2",
+	"cuMemcpyDtoHAsync_v2",
+	"cuMemcpyDtoDAsync_v2",
+	"cuMemsetD8_v2",
+	"cuMemsetD16_v2",
+	"cuMemsetD32_v2",
+	"cuMemsetD8Async",
+	"cuMemsetD16Async",
+	"cuMemsetD32Async",
+	"cuMemAllocHost_v2",
+	"cuMemFreeHost",
+	"cuModuleLoadData",
+	"cuModuleUnload",
+	"cuModuleGetFunction",
+	"cuModuleGetGlobal_v2",
+	"cuStreamCreate",
+	"cuStreamCreateWithPriority",
+	"cuStreamDestroy_v2",
+	"cuStreamSynchronize",
+	"cuStreamWaitEvent",
+	"cuEventCreate",
+	"cuEventDestroy_v2",
+	"cuEventRecord",
+	"cuEventQuery",
+	"cuEventSynchronize",
+	"cuEventElapsedTime",
+	"cuLaunchKernel",
+	"cuOccupancyMaxActiveBlocksPerMultiprocessor",
+	"cuOccupancyMaxPotentialBlockSize",
+	"cuStreamBeginCapture_v2",
+	"cuStreamEndCapture",
+	"cuGraphInstantiateWithFlags",
+	"cuGraphLaunch",
+	"cuGraphDestroy",
+	"cuGraphExecDestroy",
+}
+
+func TestLoadBindsExpectedSymbolsInOrder(t *testing.T) {
+	prev := bindFn
+	t.Cleanup(func() { bindFn = prev })
+
+	var got []string
+	seen := map[string]bool{}
+	bindFn = func(_ dynload.Library, _ any, name string) error {
+		if seen[name] {
+			t.Errorf("symbol %q bound more than once", name)
+		}
+		seen[name] = true
+		got = append(got, name)
+		return nil
+	}
+
+	f := &fakeLib{}
+	if _, err := Load(f); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+
+	if len(got) != len(expectedBindOrder) {
+		t.Fatalf("bound %d symbols, want %d", len(got), len(expectedBindOrder))
+	}
+	for i, name := range expectedBindOrder {
+		if got[i] != name {
+			t.Errorf("bind[%d] = %q, want %q", i, got[i], name)
+		}
+	}
+}
+
+func TestLoadStopsAtFirstBindFailure(t *testing.T) {
+	const failAt = "cuMemGetInfo_v2"
+	prev := bindFn
+	t.Cleanup(func() { bindFn = prev })
+
+	var attempted []string
+	bindFn = func(_ dynload.Library, _ any, name string) error {
+		attempted = append(attempted, name)
+		if name == failAt {
+			return errors.New("bind: nope")
+		}
+		return nil
+	}
+
+	f := &fakeLib{}
+	d, err := Load(f)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if d != nil {
+		t.Error("want nil Driver on failure")
+	}
+	if f.closed != 1 {
+		t.Errorf("closed = %d, want 1", f.closed)
+	}
+
+	idx := -1
+	for i, name := range expectedBindOrder {
+		if name == failAt {
+			idx = i
+			break
+		}
+	}
+	want := expectedBindOrder[:idx+1]
+	if len(attempted) != len(want) {
+		t.Fatalf("attempted %d binds before stopping, want %d", len(attempted), len(want))
+	}
+	for i, name := range want {
+		if attempted[i] != name {
+			t.Errorf("attempt[%d] = %q, want %q", i, attempted[i], name)
+		}
+	}
+}

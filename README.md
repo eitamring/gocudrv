@@ -45,6 +45,12 @@ raw handles behind Go types such as `Device`.
 
 CUDA headers and the CUDA toolkit are not required to build this package.
 
+Every driver symbol is resolved at init, so the practical minimum is a driver
+recent enough to export all of them. The newest entries in the bound set are the
+stream-ordered allocator and the CUDA graph calls, which puts the floor at a
+driver from the CUDA 11.x series (Linux `R460` or newer). See
+`docs/internals.md` for the full symbol table and the per-group breakdown.
+
 ## WSL2 quickstart
 
 Install the NVIDIA driver on Windows. Do not install a Linux NVIDIA kernel driver inside WSL. CUDA is exposed to WSL through `/usr/lib/wsl/lib/libcuda.so.1`.
