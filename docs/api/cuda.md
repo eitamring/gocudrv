@@ -439,6 +439,24 @@ The 2D copies use the `CUDA_MEMCPY2D` descriptor, so host rows are treated as
 packed (`Pitch == Width*sizeof(T)`) while device rows use the allocation pitch.
 This stays a generic CUDA primitive: no image or tensor semantics are implied.
 
+## memory pools
+
+`MemoryPool` is a handle to a device's stream-ordered memory pool, the allocator
+behind `AllocAsync`. Reusing the pool lets a high-throughput service tune
+caching and allocate from it directly. Memory pools need a CUDA 11.2 driver, so
+every entry point here returns `ErrSymbolUnavailable` on an older one.
+
+- `(*Context).DefaultMemPool() (*MemoryPool, error)` returns the device's
+  default pool. It is owned by the driver, so `MemoryPool` has no `Close`.
+- `(*MemoryPool).ReleaseThreshold()` / `SetReleaseThreshold(bytes)` read and set
+  the amount of reserved memory the pool holds before returning it to the OS.
+- `(*MemoryPool).ReservedMemCurrent()` and `UsedMemCurrent()` report pool usage
+  in bytes.
+- `func AllocFromPool[T Supported](pool *MemoryPool, stream *Stream, n int) (*Buffer[T], error)`
+  allocates `n` elements from `pool`, ordered on `stream`. Like `AllocAsync`, the
+  memory is ready once the stream reaches this point; free it with `FreeAsync` or
+  `Close`. The stream must belong to the pool's context.
+
 ## streams
 
 `Stream` is an ordered queue of GPU work owned by a `Context`. New streams are

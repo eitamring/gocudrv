@@ -40,6 +40,7 @@ var (
 	ErrGraphClosed           = errors.New("cuda: graph is closed")
 	ErrNilGraphExec          = errors.New("cuda: nil executable graph")
 	ErrGraphExecClosed       = errors.New("cuda: executable graph is closed")
+	ErrNilMemPool            = errors.New("cuda: nil memory pool")
 )
 
 // Error is the typed error returned for non-success CUDA result codes.

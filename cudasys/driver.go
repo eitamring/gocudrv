@@ -53,6 +53,10 @@ type Driver struct {
 	CuMemAllocPitch             func(dptr *CUdeviceptr, pitch *uint64, widthInBytes uint64, height uint64, elementSizeBytes uint32) CUresult
 	CuMemcpy2D                  func(pCopy *Memcpy2D) CUresult
 	CuMemcpy2DAsync             func(pCopy *Memcpy2D, stream CUstream) CUresult
+	CuDeviceGetDefaultMemPool   func(pool *CUmemoryPool, dev CUdevice) CUresult
+	CuMemPoolGetAttribute       func(pool CUmemoryPool, attr int32, value unsafe.Pointer) CUresult
+	CuMemPoolSetAttribute       func(pool CUmemoryPool, attr int32, value unsafe.Pointer) CUresult
+	CuMemAllocFromPoolAsync     func(dptr *CUdeviceptr, bytesize uint64, pool CUmemoryPool, stream CUstream) CUresult
 	CuModuleLoadData            func(module *CUmodule, image *byte) CUresult
 	CuModuleUnload              func(module CUmodule) CUresult
 	CuModuleGetFunction         func(fn *CUfunction, module CUmodule, name *byte) CUresult
@@ -180,6 +184,11 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuMemAllocPitch, "cuMemAllocPitch_v2"},
 		{&d.CuMemcpy2D, "cuMemcpy2D_v2"},
 		{&d.CuMemcpy2DAsync, "cuMemcpy2DAsync_v2"},
+		// memory pools (CUDA 11.2+)
+		{&d.CuDeviceGetDefaultMemPool, "cuDeviceGetDefaultMemPool"},
+		{&d.CuMemPoolGetAttribute, "cuMemPoolGetAttribute"},
+		{&d.CuMemPoolSetAttribute, "cuMemPoolSetAttribute"},
+		{&d.CuMemAllocFromPoolAsync, "cuMemAllocFromPoolAsync"},
 	}
 	for _, b := range required {
 		if err := bindFn(lib, b.fn, b.name); err != nil {
