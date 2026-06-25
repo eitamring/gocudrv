@@ -43,6 +43,16 @@ func StreamSynchronize(d *cudasys.Driver, stream cudasys.CUstream) error {
 	return check("cuStreamSynchronize", d.CuStreamSynchronize(stream))
 }
 
+// StreamQuery reports whether all work in stream has completed. It returns nil
+// when the stream is idle and ErrNotReady (CUDA_ERROR_NOT_READY) while work is
+// still pending.
+func StreamQuery(d *cudasys.Driver, stream cudasys.CUstream) error {
+	if d == nil || d.CuStreamQuery == nil {
+		return ErrNotInitialized
+	}
+	return check("cuStreamQuery", d.CuStreamQuery(stream))
+}
+
 // StreamWaitEvent makes stream wait until event has completed.
 func StreamWaitEvent(d *cudasys.Driver, stream cudasys.CUstream, event cudasys.CUevent, flags uint32) error {
 	if d == nil || d.CuStreamWaitEvent == nil {

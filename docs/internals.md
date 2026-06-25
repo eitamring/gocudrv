@@ -92,6 +92,7 @@ type Driver struct {
     CuStreamCreateWithPriority func(stream *CUstream, flags uint32, priority int32) CUresult
     CuStreamDestroy           func(stream CUstream) CUresult
     CuStreamSynchronize       func(stream CUstream) CUresult
+    CuStreamQuery             func(stream CUstream) CUresult
     CuStreamWaitEvent         func(stream CUstream, event CUevent, flags uint32) CUresult
     CuEventCreate             func(event *CUevent, flags uint32) CUresult
     CuEventDestroy            func(event CUevent) CUresult
@@ -161,6 +162,7 @@ Core symbols (always required at init):
 | `cuStreamCreateWithPriority` | `CuStreamCreateWithPriority` | stream |
 | `cuStreamDestroy_v2` | `CuStreamDestroy` | stream |
 | `cuStreamSynchronize` | `CuStreamSynchronize` | stream |
+| `cuStreamQuery` | `CuStreamQuery` | stream |
 | `cuStreamWaitEvent` | `CuStreamWaitEvent` | stream |
 | `cuEventCreate` | `CuEventCreate` | event |
 | `cuEventDestroy_v2` | `CuEventDestroy` | event |

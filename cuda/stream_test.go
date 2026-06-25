@@ -288,3 +288,31 @@ func TestStreamCloseHoldsLockDuringSynchronize(t *testing.T) {
 		t.Errorf("Close: %v", err)
 	}
 }
+
+func TestStreamQuery(t *testing.T) {
+	var calls memCalls
+	ctx, stream, _, _ := newAsyncCopyFixture(t, &calls)
+	ctx.driver.CuStreamQuery = func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_SUCCESS }
+	if err := stream.Query(); err != nil {
+		t.Errorf("idle Query = %v, want nil", err)
+	}
+	ctx.driver.CuStreamQuery = func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_ERROR_NOT_READY }
+	if err := stream.Query(); !errors.Is(err, ErrNotReady) {
+		t.Errorf("pending Query = %v, want ErrNotReady", err)
+	}
+}
+
+func TestStreamQueryNilClosed(t *testing.T) {
+	var s *Stream
+	if err := s.Query(); !errors.Is(err, ErrNilStream) {
+		t.Errorf("nil Query = %v, want ErrNilStream", err)
+	}
+	var calls memCalls
+	_, stream, _, _ := newAsyncCopyFixture(t, &calls)
+	if err := stream.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := stream.Query(); !errors.Is(err, ErrStreamClosed) {
+		t.Errorf("closed Query = %v, want ErrStreamClosed", err)
+	}
+}

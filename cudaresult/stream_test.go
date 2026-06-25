@@ -511,3 +511,20 @@ func TestEventElapsedTime(t *testing.T) {
 		})
 	}
 }
+
+func TestStreamQuery(t *testing.T) {
+	if err := StreamQuery(nil, 0x5151); !errors.Is(err, ErrNotInitialized) {
+		t.Errorf("nil driver = %v, want ErrNotInitialized", err)
+	}
+	if err := StreamQuery(&cudasys.Driver{}, 0x5151); !errors.Is(err, ErrNotInitialized) {
+		t.Errorf("nil func = %v, want ErrNotInitialized", err)
+	}
+	done := &cudasys.Driver{CuStreamQuery: func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_SUCCESS }}
+	if err := StreamQuery(done, 0x5151); err != nil {
+		t.Errorf("idle = %v, want nil", err)
+	}
+	pending := &cudasys.Driver{CuStreamQuery: func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_ERROR_NOT_READY }}
+	if err := StreamQuery(pending, 0x5151); !errors.Is(err, ErrNotReady) {
+		t.Errorf("pending = %v, want ErrNotReady", err)
+	}
+}

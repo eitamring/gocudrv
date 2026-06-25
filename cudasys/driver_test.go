@@ -131,6 +131,7 @@ var expectedRequiredOrder = []string{
 	"cuStreamCreateWithPriority",
 	"cuStreamDestroy_v2",
 	"cuStreamSynchronize",
+	"cuStreamQuery",
 	"cuStreamWaitEvent",
 	"cuEventCreate",
 	"cuEventDestroy_v2",
