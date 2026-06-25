@@ -131,6 +131,24 @@ func (s *Stream) Synchronize(ctx context.Context) error {
 	})
 }
 
+// Query reports whether all work submitted to the stream has completed, without
+// blocking. It returns nil when the stream is idle, ErrNotReady while work is
+// still pending, and any other CUDA error directly. This polls a single stream
+// without synchronizing the whole context.
+func (s *Stream) Query() error {
+	if s == nil {
+		return ErrNilStream
+	}
+	s.opMu.RLock()
+	defer s.opMu.RUnlock()
+	if s.closed {
+		return ErrStreamClosed
+	}
+	return s.ctx.do(context.Background(), func() error {
+		return cudaresult.StreamQuery(s.ctx.driver, s.raw)
+	})
+}
+
 // WaitEvent enqueues a dependency in stream. Work submitted to stream after
 // this call waits until event completes.
 func (s *Stream) WaitEvent(event *Event, options ...WaitOption) error {
