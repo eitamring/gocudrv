@@ -485,6 +485,9 @@ if err := stream.Synchronize(context.Background()); err != nil {
 - `(*Stream).Synchronize(ctx context.Context) error` waits until preceding
   work in that stream finishes. Canceling `ctx` stops the wait; queued GPU work
   continues.
+- `(*Stream).Query() error` reports whether the stream is idle without blocking:
+  `nil` when all work has finished, `ErrNotReady` while work is still pending. It
+  polls one stream without synchronizing the whole context.
 - `(*Stream).WaitEvent(event *Event, opts ...WaitOption) error` makes later
   work in this stream wait until `event` completes. No public wait options are
   exposed yet; zero options means CUDA's default wait behavior.
@@ -504,6 +507,28 @@ stream.
 Canceling `Stream.Synchronize` only stops the caller's wait. It does not stop
 the queued GPU work or the underlying CUDA synchronization already running on
 the executor thread; a later `Stream.Close` will still wait behind that work.
+
+### polling and timing
+
+`Stream.Query` (or `Event.Query`) lets a caller poll a single stream and do
+other work while the GPU runs, instead of blocking the whole context on
+`Synchronize`. Pair it with two timing events to measure the GPU time:
+
+```go
+start, _ := ctx.NewEvent()
+done, _ := ctx.NewEvent()
+defer start.Close()
+defer done.Close()
+
+start.Record(stream)
+fn.LaunchOn(ctx, stream, cfg, args...)
+done.Record(stream)
+
+for stream.Query() == cuda.ErrNotReady {
+    // do other host work while the GPU runs
+}
+elapsed, _ := start.Elapsed(done) // GPU time between the two events
+```
 
 ## events
 

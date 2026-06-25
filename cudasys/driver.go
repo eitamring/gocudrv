@@ -65,6 +65,7 @@ type Driver struct {
 	CuStreamCreateWithPriority  func(stream *CUstream, flags uint32, priority int32) CUresult
 	CuStreamDestroy             func(stream CUstream) CUresult
 	CuStreamSynchronize         func(stream CUstream) CUresult
+	CuStreamQuery               func(stream CUstream) CUresult
 	CuStreamWaitEvent           func(stream CUstream, event CUevent, flags uint32) CUresult
 	CuEventCreate               func(event *CUevent, flags uint32) CUresult
 	CuEventDestroy              func(event CUevent) CUresult
@@ -149,6 +150,7 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuStreamCreateWithPriority, "cuStreamCreateWithPriority"},
 		{&d.CuStreamDestroy, "cuStreamDestroy_v2"},
 		{&d.CuStreamSynchronize, "cuStreamSynchronize"},
+		{&d.CuStreamQuery, "cuStreamQuery"},
 		{&d.CuStreamWaitEvent, "cuStreamWaitEvent"},
 		// events
 		{&d.CuEventCreate, "cuEventCreate"},
