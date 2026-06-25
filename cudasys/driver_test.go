@@ -124,6 +124,7 @@ var expectedRequiredOrder = []string{
 	"cuMemAllocHost_v2",
 	"cuMemFreeHost",
 	"cuModuleLoadData",
+	"cuModuleLoadDataEx",
 	"cuModuleUnload",
 	"cuModuleGetFunction",
 	"cuModuleGetGlobal_v2",

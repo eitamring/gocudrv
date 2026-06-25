@@ -639,3 +639,92 @@ func TestModuleCloseHoldsLockDuringUnload(t *testing.T) {
 		t.Errorf("Function err = %v, want ErrModuleClosed", err)
 	}
 }
+
+func moduleExFixture(t *testing.T) *Context {
+	t.Helper()
+	drv := fakeMemoryDriver(&memCalls{}, 0x4000)
+	drv.CuModuleUnload = func(cudasys.CUmodule) cudasys.CUresult { return cudasys.CUDA_SUCCESS }
+	return newTestContext(t, drv)
+}
+
+func TestLoadModuleEx(t *testing.T) {
+	ctx := moduleExFixture(t)
+	var gotOpts []int32
+	var gotVals []uintptr
+	ctx.driver.CuModuleLoadDataEx = func(mod *cudasys.CUmodule, _ *byte, n uint32, options *int32, values *uintptr) cudasys.CUresult {
+		gotOpts = append([]int32(nil), unsafe.Slice(options, n)...)
+		gotVals = append([]uintptr(nil), unsafe.Slice(values, n)...)
+		*mod = 0x4242
+		return cudasys.CUDA_SUCCESS
+	}
+	mod, _, err := ctx.LoadModuleEx([]byte("ptx"), JITOptions{LogBufferBytes: 256, MaxRegisters: 32})
+	if err != nil {
+		t.Fatalf("LoadModuleEx: %v", err)
+	}
+	t.Cleanup(func() { _ = mod.Close() })
+
+	wantOpts := []int32{jitInfoLogBuffer, jitInfoLogBufferSizeBytes, jitErrorLogBuffer, jitErrorLogBufferSizeBytes, jitMaxRegisters}
+	if len(gotOpts) != len(wantOpts) {
+		t.Fatalf("options = %v, want %v", gotOpts, wantOpts)
+	}
+	for i := range wantOpts {
+		if gotOpts[i] != wantOpts[i] {
+			t.Errorf("option[%d] = %d, want %d", i, gotOpts[i], wantOpts[i])
+		}
+	}
+	if gotVals[1] != 256 || gotVals[3] != 256 {
+		t.Errorf("log buffer sizes = %d, %d, want 256", gotVals[1], gotVals[3])
+	}
+	if gotVals[4] != 32 {
+		t.Errorf("max registers value = %d, want 32", gotVals[4])
+	}
+}
+
+func TestLoadModuleExError(t *testing.T) {
+	ctx := moduleExFixture(t)
+	ctx.driver.CuModuleLoadDataEx = func(*cudasys.CUmodule, *byte, uint32, *int32, *uintptr) cudasys.CUresult {
+		return cudasys.CUDA_ERROR_INVALID_PTX
+	}
+	mod, _, err := ctx.LoadModuleEx([]byte("bad"), JITOptions{})
+	if !errors.Is(err, ErrInvalidPTX) {
+		t.Errorf("err = %v, want ErrInvalidPTX", err)
+	}
+	if mod != nil {
+		t.Error("module should be nil on error")
+	}
+}
+
+func TestLoadModuleExRejects(t *testing.T) {
+	var c *Context
+	if _, _, err := c.LoadModuleEx([]byte("x"), JITOptions{}); !errors.Is(err, ErrNilContext) {
+		t.Errorf("nil ctx = %v, want ErrNilContext", err)
+	}
+	ctx := moduleExFixture(t)
+	if _, _, err := ctx.LoadModuleEx(nil, JITOptions{}); !errors.Is(err, ErrEmptyImage) {
+		t.Errorf("empty image = %v, want ErrEmptyImage", err)
+	}
+}
+
+func TestNullTerminated(t *testing.T) {
+	in := []byte("ptx\x00")
+	if out := nullTerminated(in); &out[0] != &in[0] {
+		t.Error("already-terminated image should be returned unchanged")
+	}
+	in2 := []byte("ptx")
+	out2 := nullTerminated(in2)
+	if len(out2) != 4 || out2[3] != 0 || string(out2[:3]) != "ptx" {
+		t.Errorf("nullTerminated = %v", out2)
+	}
+	if &out2[0] == &in2[0] {
+		t.Error("non-terminated image should be copied, not mutated in place")
+	}
+}
+
+func TestTrimNull(t *testing.T) {
+	if got := trimNull([]byte("hello\x00garbage")); got != "hello" {
+		t.Errorf("trimNull = %q, want hello", got)
+	}
+	if got := trimNull([]byte("nonull")); got != "nonull" {
+		t.Errorf("trimNull no-null = %q, want nonull", got)
+	}
+}

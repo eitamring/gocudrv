@@ -58,6 +58,7 @@ type Driver struct {
 	CuMemPoolSetAttribute       func(pool CUmemoryPool, attr int32, value unsafe.Pointer) CUresult
 	CuMemAllocFromPoolAsync     func(dptr *CUdeviceptr, bytesize uint64, pool CUmemoryPool, stream CUstream) CUresult
 	CuModuleLoadData            func(module *CUmodule, image *byte) CUresult
+	CuModuleLoadDataEx          func(module *CUmodule, image *byte, numOptions uint32, options *int32, optionValues *uintptr) CUresult
 	CuModuleUnload              func(module CUmodule) CUresult
 	CuModuleGetFunction         func(fn *CUfunction, module CUmodule, name *byte) CUresult
 	CuModuleGetGlobal           func(dptr *CUdeviceptr, bytes *uint64, module CUmodule, name *byte) CUresult
@@ -142,6 +143,7 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuMemFreeHost, "cuMemFreeHost"},
 		// module loading and globals
 		{&d.CuModuleLoadData, "cuModuleLoadData"},
+		{&d.CuModuleLoadDataEx, "cuModuleLoadDataEx"},
 		{&d.CuModuleUnload, "cuModuleUnload"},
 		{&d.CuModuleGetFunction, "cuModuleGetFunction"},
 		{&d.CuModuleGetGlobal, "cuModuleGetGlobal_v2"},
