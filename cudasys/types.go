@@ -14,4 +14,5 @@ type (
 	CUevent     uintptr
 	CUgraph     uintptr
 	CUgraphExec uintptr
+	CUgraphNode uintptr
 )

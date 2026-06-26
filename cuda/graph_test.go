@@ -226,3 +226,100 @@ func TestGraphPropagatesError(t *testing.T) {
 		t.Errorf("BeginCapture err = %v, want ErrInvalidValue", err)
 	}
 }
+
+func newGraphExecFixture(t *testing.T) (*Context, *Graph, *GraphExec) {
+	t.Helper()
+	var calls graphCalls
+	ctx := newTestContext(t, graphDriver(&calls))
+	stream, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream: %v", err)
+	}
+	t.Cleanup(func() { _ = stream.Close() })
+	if err := stream.BeginCapture(CaptureModeThreadLocal); err != nil {
+		t.Fatalf("BeginCapture: %v", err)
+	}
+	g, err := stream.EndCapture()
+	if err != nil {
+		t.Fatalf("EndCapture: %v", err)
+	}
+	t.Cleanup(func() { _ = g.Close() })
+	exec, err := g.Instantiate()
+	if err != nil {
+		t.Fatalf("Instantiate: %v", err)
+	}
+	t.Cleanup(func() { _ = exec.Close() })
+	return ctx, g, exec
+}
+
+func TestGraphExecUpdate(t *testing.T) {
+	ctx, g, exec := newGraphExecFixture(t)
+	var updates atomic.Int32
+	ctx.driver.CuGraphExecUpdate = func(cudasys.CUgraphExec, cudasys.CUgraph, *cudasys.CUgraphNode, *int32) cudasys.CUresult {
+		updates.Add(1)
+		return cudasys.CUDA_SUCCESS
+	}
+	if err := exec.Update(g); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updates.Load() != 1 {
+		t.Errorf("updates = %d, want 1", updates.Load())
+	}
+}
+
+func TestGraphExecUpdateFailure(t *testing.T) {
+	ctx, g, exec := newGraphExecFixture(t)
+	ctx.driver.CuGraphExecUpdate = func(cudasys.CUgraphExec, cudasys.CUgraph, *cudasys.CUgraphNode, *int32) cudasys.CUresult {
+		return cudasys.CUDA_ERROR_GRAPH_EXEC_UPDATE_FAILURE
+	}
+	if err := exec.Update(g); !errors.Is(err, ErrGraphExecUpdateFailure) {
+		t.Errorf("Update = %v, want ErrGraphExecUpdateFailure", err)
+	}
+}
+
+func TestGraphExecUpdateUnavailable(t *testing.T) {
+	// The fixture driver does not bind cuGraphExecUpdate.
+	_, g, exec := newGraphExecFixture(t)
+	if err := exec.Update(g); !errors.Is(err, ErrSymbolUnavailable) {
+		t.Errorf("Update = %v, want ErrSymbolUnavailable", err)
+	}
+}
+
+func TestGraphExecUpdateRejects(t *testing.T) {
+	ctx, g, exec := newGraphExecFixture(t)
+	ctx.driver.CuGraphExecUpdate = func(cudasys.CUgraphExec, cudasys.CUgraph, *cudasys.CUgraphNode, *int32) cudasys.CUresult {
+		return cudasys.CUDA_SUCCESS
+	}
+	var nilExec *GraphExec
+	if err := nilExec.Update(g); !errors.Is(err, ErrNilGraphExec) {
+		t.Errorf("nil exec = %v, want ErrNilGraphExec", err)
+	}
+	if err := exec.Update(nil); !errors.Is(err, ErrNilGraph) {
+		t.Errorf("nil graph = %v, want ErrNilGraph", err)
+	}
+	other := &Graph{ctx: &Context{}}
+	if err := exec.Update(other); !errors.Is(err, ErrContextMismatch) {
+		t.Errorf("cross-context = %v, want ErrContextMismatch", err)
+	}
+}
+
+func TestGraphExecUpdateClosed(t *testing.T) {
+	ctx, g, exec := newGraphExecFixture(t)
+	ctx.driver.CuGraphExecUpdate = func(cudasys.CUgraphExec, cudasys.CUgraph, *cudasys.CUgraphNode, *int32) cudasys.CUresult {
+		return cudasys.CUDA_SUCCESS
+	}
+	if err := exec.Close(); err != nil {
+		t.Fatalf("Close exec: %v", err)
+	}
+	if err := exec.Update(g); !errors.Is(err, ErrGraphExecClosed) {
+		t.Errorf("closed exec Update = %v, want ErrGraphExecClosed", err)
+	}
+
+	_, g2, exec2 := newGraphExecFixture(t)
+	if err := g2.Close(); err != nil {
+		t.Fatalf("Close graph: %v", err)
+	}
+	if err := exec2.Update(g2); !errors.Is(err, ErrGraphClosed) {
+		t.Errorf("closed graph Update = %v, want ErrGraphClosed", err)
+	}
+}

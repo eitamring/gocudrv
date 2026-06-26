@@ -69,6 +69,22 @@ func GraphDestroy(d *cudasys.Driver, graph cudasys.CUgraph) error {
 	return check("cuGraphDestroy", d.CuGraphDestroy(graph))
 }
 
+// GraphExecUpdate re-applies graph's node parameters to exec without
+// re-instantiating. It returns ErrGraphExecUpdateFailure when the topology
+// changed too much to update in place. The symbol is bound best-effort, so this
+// returns ErrSymbolUnavailable on a driver that lacks it.
+func GraphExecUpdate(d *cudasys.Driver, exec cudasys.CUgraphExec, graph cudasys.CUgraph) error {
+	if d == nil {
+		return ErrNotInitialized
+	}
+	if d.CuGraphExecUpdate == nil {
+		return ErrSymbolUnavailable
+	}
+	var errNode cudasys.CUgraphNode
+	var result int32
+	return check("cuGraphExecUpdate", d.CuGraphExecUpdate(exec, graph, &errNode, &result))
+}
+
 // GraphExecDestroy releases an executable graph previously returned by
 // GraphInstantiate.
 func GraphExecDestroy(d *cudasys.Driver, exec cudasys.CUgraphExec) error {
