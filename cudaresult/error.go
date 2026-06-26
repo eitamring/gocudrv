@@ -77,7 +77,18 @@ var (
 	ErrNotSupported               = &Error{Code: cudasys.CUDA_ERROR_NOT_SUPPORTED}
 	ErrSystemNotReady             = &Error{Code: cudasys.CUDA_ERROR_SYSTEM_NOT_READY}
 	ErrSystemDriverMismatch       = &Error{Code: cudasys.CUDA_ERROR_SYSTEM_DRIVER_MISMATCH}
+	ErrStreamCaptureUnsupported   = &Error{Code: cudasys.CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED}
+	ErrStreamCaptureInvalidated   = &Error{Code: cudasys.CUDA_ERROR_STREAM_CAPTURE_INVALIDATED}
+	ErrStreamCaptureMerge         = &Error{Code: cudasys.CUDA_ERROR_STREAM_CAPTURE_MERGE}
+	ErrStreamCaptureUnmatched     = &Error{Code: cudasys.CUDA_ERROR_STREAM_CAPTURE_UNMATCHED}
+	ErrStreamCaptureUnjoined      = &Error{Code: cudasys.CUDA_ERROR_STREAM_CAPTURE_UNJOINED}
+	ErrStreamCaptureIsolation     = &Error{Code: cudasys.CUDA_ERROR_STREAM_CAPTURE_ISOLATION}
+	ErrStreamCaptureImplicit      = &Error{Code: cudasys.CUDA_ERROR_STREAM_CAPTURE_IMPLICIT}
+	ErrCapturedEvent              = &Error{Code: cudasys.CUDA_ERROR_CAPTURED_EVENT}
+	ErrStreamCaptureWrongThread   = &Error{Code: cudasys.CUDA_ERROR_STREAM_CAPTURE_WRONG_THREAD}
+	ErrTimeout                    = &Error{Code: cudasys.CUDA_ERROR_TIMEOUT}
 	ErrGraphExecUpdateFailure     = &Error{Code: cudasys.CUDA_ERROR_GRAPH_EXEC_UPDATE_FAILURE}
+	ErrExternalDevice             = &Error{Code: cudasys.CUDA_ERROR_EXTERNAL_DEVICE}
 	ErrUnknown                    = &Error{Code: cudasys.CUDA_ERROR_UNKNOWN}
 )
 

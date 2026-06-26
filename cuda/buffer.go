@@ -217,13 +217,14 @@ func (b *Buffer[T]) CopyFrom(ctx context.Context, src []T) error {
 	if len(src) == 0 || len(src) != b.length {
 		return ErrLengthMismatch
 	}
+	var pin runtime.Pinner
+	pin.Pin(&src[0])
+	defer pin.Unpin()
 	srcPtr := (*byte)(unsafe.Pointer(&src[0]))
 	bytes := b.bytes
-	err := b.ctx.doWait(ctx, func() error {
+	return b.ctx.doWait(ctx, func() error {
 		return cudaresult.MemcpyHtoD(b.ctx.driver, b.ptr, srcPtr, bytes)
 	})
-	runtime.KeepAlive(src)
-	return err
 }
 
 // CopyTo copies b.Len() elements from the buffer into the host slice.
@@ -240,13 +241,14 @@ func (b *Buffer[T]) CopyTo(ctx context.Context, dst []T) error {
 	if len(dst) == 0 || len(dst) != b.length {
 		return ErrLengthMismatch
 	}
+	var pin runtime.Pinner
+	pin.Pin(&dst[0])
+	defer pin.Unpin()
 	dstPtr := (*byte)(unsafe.Pointer(&dst[0]))
 	bytes := b.bytes
-	err := b.ctx.doWait(ctx, func() error {
+	return b.ctx.doWait(ctx, func() error {
 		return cudaresult.MemcpyDtoH(b.ctx.driver, dstPtr, b.ptr, bytes)
 	})
-	runtime.KeepAlive(dst)
-	return err
 }
 
 // CopyFromHost copies len(src) elements from a pinned HostBuffer into the

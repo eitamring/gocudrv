@@ -92,8 +92,8 @@ func (g *Graph) Instantiate() (*GraphExec, error) {
 	if g == nil {
 		return nil, ErrNilGraph
 	}
-	g.opMu.RLock()
-	defer g.opMu.RUnlock()
+	g.opMu.Lock()
+	defer g.opMu.Unlock()
 	if g.closed {
 		return nil, ErrGraphClosed
 	}
@@ -147,8 +147,8 @@ func (e *GraphExec) Launch(ctx context.Context, stream *Stream) error {
 	if stream.closed {
 		return ErrStreamClosed
 	}
-	e.opMu.RLock()
-	defer e.opMu.RUnlock()
+	e.opMu.Lock()
+	defer e.opMu.Unlock()
 	if e.closed {
 		return ErrGraphExecClosed
 	}
@@ -170,13 +170,13 @@ func (e *GraphExec) Update(graph *Graph) error {
 	if graph == nil {
 		return ErrNilGraph
 	}
-	e.opMu.RLock()
-	defer e.opMu.RUnlock()
+	e.opMu.Lock()
+	defer e.opMu.Unlock()
 	if e.closed {
 		return ErrGraphExecClosed
 	}
-	graph.opMu.RLock()
-	defer graph.opMu.RUnlock()
+	graph.opMu.Lock()
+	defer graph.opMu.Unlock()
 	if graph.closed {
 		return ErrGraphClosed
 	}

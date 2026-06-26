@@ -2,6 +2,7 @@ package cuda
 
 import (
 	"context"
+	"math"
 
 	"github.com/eitamring/gocudrv/cudaresult"
 )
@@ -16,7 +17,7 @@ func (f *Function) MaxActiveBlocksPerSM(blockSize, dynamicSharedMem int) (int, e
 	if f == nil {
 		return 0, ErrNilFunction
 	}
-	if blockSize <= 0 {
+	if blockSize <= 0 || blockSize > math.MaxInt32 {
 		return 0, ErrInvalidBlockSize
 	}
 	if dynamicSharedMem < 0 {
@@ -55,7 +56,7 @@ func (f *Function) SuggestedBlockSize(dynamicSharedMem, blockSizeLimit int) (min
 	if f == nil {
 		return 0, 0, ErrNilFunction
 	}
-	if dynamicSharedMem < 0 || blockSizeLimit < 0 {
+	if dynamicSharedMem < 0 || blockSizeLimit < 0 || blockSizeLimit > math.MaxInt32 {
 		return 0, 0, ErrInvalidLength
 	}
 	if f.module == nil {

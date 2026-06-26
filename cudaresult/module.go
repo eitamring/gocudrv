@@ -23,6 +23,9 @@ func ModuleLoadDataEx(d *cudasys.Driver, image *byte, options []int32, values []
 	if d == nil || d.CuModuleLoadDataEx == nil {
 		return 0, ErrNotInitialized
 	}
+	if len(values) != len(options) {
+		return 0, ErrInvalidValue
+	}
 	var optPtr *int32
 	var valPtr *uintptr
 	if len(options) > 0 {

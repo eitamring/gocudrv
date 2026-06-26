@@ -120,10 +120,13 @@ func (b *PitchedBuffer[T]) CopyFrom(ctx context.Context, src []T) error {
 	if len(src) != n {
 		return ErrLengthMismatch
 	}
+	var pin runtime.Pinner
+	pin.Pin(&src[0])
+	defer pin.Unpin()
 	widthBytes := uint64(b.width) * elemSize[T]()
 	desc := cudasys.Memcpy2D{
 		SrcMemoryType: cudasys.MemoryTypeHost,
-		SrcHost:       uintptr(unsafe.Pointer(&src[0])),
+		SrcHost:       unsafe.Pointer(&src[0]),
 		SrcPitch:      widthBytes,
 		DstMemoryType: cudasys.MemoryTypeDevice,
 		DstDevice:     b.ptr,
@@ -131,11 +134,9 @@ func (b *PitchedBuffer[T]) CopyFrom(ctx context.Context, src []T) error {
 		WidthInBytes:  widthBytes,
 		Height:        uint64(b.height),
 	}
-	e := b.ctx.doWait(ctx, func() error {
+	return b.ctx.doWait(ctx, func() error {
 		return cudaresult.Memcpy2D(b.ctx.driver, &desc)
 	})
-	runtime.KeepAlive(src)
-	return e
 }
 
 // CopyTo copies the pitched buffer into a packed host slice of Width*Height
@@ -156,22 +157,23 @@ func (b *PitchedBuffer[T]) CopyTo(ctx context.Context, dst []T) error {
 	if len(dst) != n {
 		return ErrLengthMismatch
 	}
+	var pin runtime.Pinner
+	pin.Pin(&dst[0])
+	defer pin.Unpin()
 	widthBytes := uint64(b.width) * elemSize[T]()
 	desc := cudasys.Memcpy2D{
 		SrcMemoryType: cudasys.MemoryTypeDevice,
 		SrcDevice:     b.ptr,
 		SrcPitch:      b.pitch,
 		DstMemoryType: cudasys.MemoryTypeHost,
-		DstHost:       uintptr(unsafe.Pointer(&dst[0])),
+		DstHost:       unsafe.Pointer(&dst[0]),
 		DstPitch:      widthBytes,
 		WidthInBytes:  widthBytes,
 		Height:        uint64(b.height),
 	}
-	e := b.ctx.doWait(ctx, func() error {
+	return b.ctx.doWait(ctx, func() error {
 		return cudaresult.Memcpy2D(b.ctx.driver, &desc)
 	})
-	runtime.KeepAlive(dst)
-	return e
 }
 
 // CopyToDevice copies this buffer into dst, another pitched buffer of equal

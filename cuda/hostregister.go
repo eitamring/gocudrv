@@ -16,15 +16,16 @@ import (
 //
 // Lifetime rule: the caller owns the backing memory and must keep the slice
 // alive and unchanged (do not resize, reslice the backing array away, or reuse
-// it) until Close unregisters it. RegisteredHost retains a reference to the
-// slice, so its backing array is not collected while the registration is open,
-// but the caller must not free or repurpose it through another alias. Close the
-// registration before its owning Context.
+// it) until Close unregisters it. RegisteredHost pins the backing array, so the
+// garbage collector neither moves nor collects it while the registration is
+// open, but the caller must not free or repurpose it through another alias.
+// Close the registration before its owning Context.
 type RegisteredHost[T Supported] struct {
 	ctx    *Context
 	mem    []T
 	ptr    *byte
 	bytes  uint64
+	pinner runtime.Pinner
 	opMu   sync.RWMutex
 	closed bool
 }
@@ -40,16 +41,16 @@ func RegisterHost[T Supported](ctx *Context, mem []T) (*RegisteredHost[T], error
 	if len(mem) == 0 {
 		return nil, ErrInvalidLength
 	}
-	ptr := (*byte)(unsafe.Pointer(&mem[0]))
-	bytes := uint64(len(mem)) * elemSize[T]()
-	err := ctx.doWait(context.Background(), func() error {
-		return cudaresult.MemHostRegister(ctx.driver, ptr, bytes, 0)
-	})
-	runtime.KeepAlive(mem)
-	if err != nil {
+	r := &RegisteredHost[T]{ctx: ctx, mem: mem, bytes: uint64(len(mem)) * elemSize[T]()}
+	r.pinner.Pin(&mem[0])
+	r.ptr = (*byte)(unsafe.Pointer(&mem[0]))
+	if err := ctx.doWait(context.Background(), func() error {
+		return cudaresult.MemHostRegister(ctx.driver, r.ptr, r.bytes, 0)
+	}); err != nil {
+		r.pinner.Unpin()
 		return nil, err
 	}
-	return &RegisteredHost[T]{ctx: ctx, mem: mem, ptr: ptr, bytes: bytes}, nil
+	return r, nil
 }
 
 // Slice returns the registered host slice for use with the copy methods. It is
@@ -88,13 +89,12 @@ func (r *RegisteredHost[T]) Close() error {
 	if r.closed {
 		return nil
 	}
-	err := r.ctx.doWait(context.Background(), func() error {
+	if err := r.ctx.doWait(context.Background(), func() error {
 		return cudaresult.MemHostUnregister(r.ctx.driver, r.ptr)
-	})
-	runtime.KeepAlive(r.mem)
-	if err != nil {
+	}); err != nil {
 		return err
 	}
+	r.pinner.Unpin()
 	r.closed = true
 	return nil
 }

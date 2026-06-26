@@ -41,14 +41,15 @@ func (b *Buffer[T]) CopyFromAt(ctx context.Context, dstOffset int, src []T) erro
 	if dstOffset > b.length-len(src) {
 		return ErrOutOfRange
 	}
+	var pin runtime.Pinner
+	pin.Pin(&src[0])
+	defer pin.Unpin()
 	srcPtr := (*byte)(unsafe.Pointer(&src[0]))
 	dst := b.offsetPtr(dstOffset)
 	bytes := uint64(len(src)) * elemSize[T]()
-	err := b.ctx.doWait(ctx, func() error {
+	return b.ctx.doWait(ctx, func() error {
 		return cudaresult.MemcpyHtoD(b.ctx.driver, dst, srcPtr, bytes)
 	})
-	runtime.KeepAlive(src)
-	return err
 }
 
 // CopyToAt copies len(dst) elements from the buffer, starting at element
@@ -69,14 +70,15 @@ func (b *Buffer[T]) CopyToAt(ctx context.Context, dst []T, srcOffset int) error 
 	if srcOffset > b.length-len(dst) {
 		return ErrOutOfRange
 	}
+	var pin runtime.Pinner
+	pin.Pin(&dst[0])
+	defer pin.Unpin()
 	dstPtr := (*byte)(unsafe.Pointer(&dst[0]))
 	src := b.offsetPtr(srcOffset)
 	bytes := uint64(len(dst)) * elemSize[T]()
-	err := b.ctx.doWait(ctx, func() error {
+	return b.ctx.doWait(ctx, func() error {
 		return cudaresult.MemcpyDtoH(b.ctx.driver, dstPtr, src, bytes)
 	})
-	runtime.KeepAlive(dst)
-	return err
 }
 
 // CopyToDeviceAt copies n elements from this buffer starting at srcOffset into
