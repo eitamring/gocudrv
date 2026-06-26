@@ -167,6 +167,36 @@ func BenchmarkAsyncPinnedCopy(b *testing.B) {
 	}
 }
 
+func BenchmarkPageableCopyDtoH(b *testing.B) {
+	ctx := benchContext(b)
+	const n = 4096
+	buf, _ := Alloc[float32](ctx, n)
+	b.Cleanup(func() { _ = buf.Close() })
+	dst := make([]float32, n)
+	b.SetBytes(n * 4)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := buf.CopyTo(context.Background(), dst); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkFill(b *testing.B) {
+	ctx := benchContext(b)
+	const n = 4096
+	buf, _ := Alloc[float32](ctx, n)
+	b.Cleanup(func() { _ = buf.Close() })
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := buf.Fill(context.Background(), 1.5); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkGraphLaunch(b *testing.B) {
 	ctx := benchContext(b)
 	stream, _ := ctx.NewStream()
