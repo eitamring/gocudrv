@@ -40,6 +40,14 @@ WSL2, `nvcuda.dll` on Windows), binds the driver API symbols with pure Go, and
 wraps the raw CUDA result codes as Go errors. The public `cuda` package keeps
 raw handles behind Go types such as `Device`.
 
+## Scope
+
+`gocudrv` is a focused CUDA Driver API wrapper. Higher-level stacks (OCR,
+inference, image decode, model orchestration) belong in separate modules layered
+*above* this one. A sibling module can reuse this package's context, streams, and
+buffers through the raw handle accessors; see
+[sibling module integration](docs/integration.md) for the contract.
+
 ## Requirements
 
 - NVIDIA GPU with a working driver
@@ -115,6 +123,7 @@ files.
 - [Getting started](docs/getting-started.md)
 - [Writing and shipping kernels](docs/kernels.md)
 - [Public API](docs/api/cuda.md)
+- [Sibling module integration](docs/integration.md)
 - [Internals](docs/internals.md)
 - [Docs index](docs/README.md)
 
