@@ -741,6 +741,48 @@ cfg, err := fn.SuggestedConfig1D(n, 0) // occupancy-picked block size for n elem
   folds `SuggestedBlockSize` and `LaunchConfig1D` into one call: a ready 1D config
   covering `n` elements at the occupancy-maximizing block size.
 
+## kernel attributes
+
+Kernels can be inspected and tuned through `cuFuncGetAttribute` /
+`cuFuncSetAttribute`. The most common need is raising the dynamic shared memory a
+kernel may request: launches default to a 48 KB cap, and a kernel that opts into
+more (many attention and GEMM kernels do) must raise it first or the launch
+fails.
+
+```go
+if err := fn.SetMaxDynamicSharedMemory(96 * 1024); err != nil {
+    return err
+}
+regs, _ := fn.Attribute(cuda.FuncAttrNumRegs)
+```
+
+- `(*Function).SetMaxDynamicSharedMemory(bytes int) error` raises the dynamic
+  shared-memory limit for launches of the function.
+- `(*Function).SetAttribute(attr FunctionAttribute, value int) error` and
+  `(*Function).Attribute(attr FunctionAttribute) (int, error)` set and read any
+  attribute by its `FuncAttr*` constant.
+- All return `ErrSymbolUnavailable` on a driver without the attribute symbols.
+
+## peer access and pointers
+
+For multi-GPU work, a context can be granted direct access to another context's
+device memory, and buffers can be copied device-to-device across contexts.
+
+- `(*Device).CanAccessPeer(peer *Device) (bool, error)` reports whether direct
+  peer access is possible (`cuDeviceCanAccessPeer`).
+- `(*Context).EnablePeerAccess(peer *Context) error` /
+  `(*Context).DisablePeerAccess(peer *Context) error` grant and revoke access to
+  `peer`'s memory from this context (`cuCtxEnablePeerAccess`).
+- `(*Buffer[T]).CopyToPeer(ctx, dst *Buffer[T]) error` copies into an equal-length
+  buffer in another context via `cuMemcpyPeer`; it blocks until the copy
+  completes. Enabling peer access first is not required but makes it faster.
+- `(*Context).PointerMemoryType(ptr) (MemoryType, error)` reports whether a
+  pointer addresses host, device, array, or unified memory
+  (`cuPointerGetAttribute`).
+
+These all return `ErrSymbolUnavailable` on a driver that lacks the underlying
+symbol.
+
 ## device globals
 
 `Module.Global` looks up a `__device__` or `__constant__` variable in a loaded

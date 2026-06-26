@@ -86,6 +86,14 @@ type Driver struct {
 	CuGraphDestroy       func(graph CUgraph) CUresult
 	CuGraphExecDestroy   func(execGraph CUgraphExec) CUresult
 	CuGraphExecUpdate    func(execGraph CUgraphExec, graph CUgraph, errNode *CUgraphNode, updateResult *int32) CUresult
+
+	CuFuncSetAttribute     func(fn CUfunction, attrib int32, value int32) CUresult
+	CuFuncGetAttribute     func(value *int32, attrib int32, fn CUfunction) CUresult
+	CuPointerGetAttribute  func(data unsafe.Pointer, attribute int32, ptr CUdeviceptr) CUresult
+	CuDeviceCanAccessPeer  func(canAccess *int32, dev CUdevice, peerDev CUdevice) CUresult
+	CuCtxEnablePeerAccess  func(peerContext CUcontext, flags uint32) CUresult
+	CuCtxDisablePeerAccess func(peerContext CUcontext) CUresult
+	CuMemcpyPeer           func(dstDevice CUdeviceptr, dstContext CUcontext, srcDevice CUdeviceptr, srcContext CUcontext, byteCount uint64) CUresult
 }
 
 // bindFn is the symbol-binding function used by Load. Overridable in tests.
@@ -195,6 +203,15 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuMemPoolGetAttribute, "cuMemPoolGetAttribute"},
 		{&d.CuMemPoolSetAttribute, "cuMemPoolSetAttribute"},
 		{&d.CuMemAllocFromPoolAsync, "cuMemAllocFromPoolAsync"},
+		// kernel and pointer attributes (CUDA 6.5+ / 4.0+)
+		{&d.CuFuncSetAttribute, "cuFuncSetAttribute"},
+		{&d.CuFuncGetAttribute, "cuFuncGetAttribute"},
+		{&d.CuPointerGetAttribute, "cuPointerGetAttribute"},
+		// peer access for multi-GPU (CUDA 4.0+)
+		{&d.CuDeviceCanAccessPeer, "cuDeviceCanAccessPeer"},
+		{&d.CuCtxEnablePeerAccess, "cuCtxEnablePeerAccess"},
+		{&d.CuCtxDisablePeerAccess, "cuCtxDisablePeerAccess"},
+		{&d.CuMemcpyPeer, "cuMemcpyPeer"},
 	}
 	for _, b := range required {
 		if err := bindFn(lib, b.fn, b.name); err != nil {

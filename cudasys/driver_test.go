@@ -166,6 +166,13 @@ var expectedOptionalOrder = []string{
 	"cuMemPoolGetAttribute",
 	"cuMemPoolSetAttribute",
 	"cuMemAllocFromPoolAsync",
+	"cuFuncSetAttribute",
+	"cuFuncGetAttribute",
+	"cuPointerGetAttribute",
+	"cuDeviceCanAccessPeer",
+	"cuCtxEnablePeerAccess",
+	"cuCtxDisablePeerAccess",
+	"cuMemcpyPeer",
 }
 
 func TestLoadBindsExpectedSymbolsInOrder(t *testing.T) {
