@@ -15,14 +15,12 @@ import (
 // keeps it current. Every driver call that needs context affinity routes
 // through the executor.
 type Context struct {
-	device    *Device
-	driver    *cudasys.Driver
-	raw       cudasys.CUcontext
-	exec      *executor.Executor
-	opMu      sync.RWMutex
-	closed    atomic.Bool
-	closeOnce sync.Once
-	closeErr  error
+	device *Device
+	driver *cudasys.Driver
+	raw    cudasys.CUcontext
+	exec   *executor.Executor
+	opMu   sync.RWMutex
+	closed atomic.Bool
 }
 
 // Primary retains the primary context on the device and binds it as the
@@ -157,25 +155,31 @@ func (c *Context) doWith(ctx context.Context, fn func() error, waitAfterSubmit b
 	return c.exec.DoCtx(ctx, fn)
 }
 
-func (c *Context) closeOnExecutor() error {
-	clearErr := cudaresult.CtxSetCurrent(c.driver, 0)
-	releaseErr := cudaresult.PrimaryCtxRelease(c.driver, c.device.handle)
-	return errors.Join(clearErr, releaseErr)
-}
-
-// Close releases the primary context retain and stops the executor.
-// Idempotent: subsequent calls return the first call's result. After Close
-// returns, all Context methods return ErrContextClosed.
+// Close releases the primary context retain and stops the executor. After a
+// successful Close, all Context methods return ErrContextClosed and further
+// Close calls return nil. If releasing the primary context fails the retain
+// count was not dropped, so the Context stays open for Close to be retried.
 func (c *Context) Close() error {
 	if c == nil || c.exec == nil || c.device == nil {
 		return ErrNilContext
 	}
-	c.closeOnce.Do(func() {
-		c.opMu.Lock()
-		defer c.opMu.Unlock()
-		c.closed.Store(true)
-		c.closeErr = c.exec.Do(c.closeOnExecutor)
-		_ = c.exec.Close()
-	})
-	return c.closeErr
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+	if c.closed.Load() {
+		return nil
+	}
+	var clearErr, releaseErr error
+	if err := c.exec.Do(func() error {
+		clearErr = cudaresult.CtxSetCurrent(c.driver, 0)
+		releaseErr = cudaresult.PrimaryCtxRelease(c.driver, c.device.handle)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if releaseErr != nil {
+		return releaseErr
+	}
+	c.closed.Store(true)
+	_ = c.exec.Close()
+	return clearErr
 }

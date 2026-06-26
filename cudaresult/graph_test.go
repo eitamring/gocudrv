@@ -131,4 +131,11 @@ func TestGraphExecUpdate(t *testing.T) {
 	if err := GraphExecUpdate(fail, 0x7E7E, 0x6A6A); !errors.Is(err, ErrGraphExecUpdateFailure) {
 		t.Errorf("update failure = %v, want ErrGraphExecUpdateFailure", err)
 	}
+	declined := &cudasys.Driver{CuGraphExecUpdate: func(_ cudasys.CUgraphExec, _ cudasys.CUgraph, _ *cudasys.CUgraphNode, result *int32) cudasys.CUresult {
+		*result = 2 // CU_GRAPH_EXEC_UPDATE_ERROR_TOPOLOGY_CHANGED
+		return cudasys.CUDA_SUCCESS
+	}}
+	if err := GraphExecUpdate(declined, 0x7E7E, 0x6A6A); !errors.Is(err, ErrGraphExecUpdateFailure) {
+		t.Errorf("declined update = %v, want ErrGraphExecUpdateFailure", err)
+	}
 }

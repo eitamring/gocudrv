@@ -254,4 +254,8 @@ func TestModuleLoadDataEx(t *testing.T) {
 	if _, err := ModuleLoadDataEx(dErr, &img[0], opts, vals); !errors.Is(err, ErrInvalidPTX) {
 		t.Errorf("err = %v, want ErrInvalidPTX", err)
 	}
+
+	if _, err := ModuleLoadDataEx(d, &img[0], opts, vals[:2]); !errors.Is(err, ErrInvalidValue) {
+		t.Errorf("length mismatch = %v, want ErrInvalidValue", err)
+	}
 }

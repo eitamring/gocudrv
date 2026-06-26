@@ -1,14 +1,18 @@
 package cudasys
 
+import "unsafe"
+
 // Memcpy2D mirrors the CUDA driver CUDA_MEMCPY2D structure passed to cuMemcpy2D.
 // Field order and the padding after each memory-type field match the C layout
-// on a 64-bit ABI; the size is guarded by a test.
+// on a 64-bit ABI; the size is guarded by a test. The host fields are
+// unsafe.Pointer rather than uintptr so the garbage collector keeps the
+// referenced host memory alive for the duration of the copy.
 type Memcpy2D struct {
 	SrcXInBytes   uint64
 	SrcY          uint64
 	SrcMemoryType uint32
 	_             uint32
-	SrcHost       uintptr
+	SrcHost       unsafe.Pointer
 	SrcDevice     CUdeviceptr
 	SrcArray      uintptr
 	SrcPitch      uint64
@@ -16,7 +20,7 @@ type Memcpy2D struct {
 	DstY          uint64
 	DstMemoryType uint32
 	_             uint32
-	DstHost       uintptr
+	DstHost       unsafe.Pointer
 	DstDevice     CUdeviceptr
 	DstArray      uintptr
 	DstPitch      uint64
