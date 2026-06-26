@@ -354,6 +354,9 @@ func TestCloseWaitsForInFlightContextWorkBeforeRelease(t *testing.T) {
 }
 
 func TestCloseReportsReleaseFailure(t *testing.T) {
+	var releaseFails atomic.Bool
+	releaseFails.Store(true)
+	var releaseCalls atomic.Int32
 	installDriver(t, &cudasys.Driver{
 		CuDeviceGetCount: func(n *int32) cudasys.CUresult { *n = 1; return cudasys.CUDA_SUCCESS },
 		CuDeviceGet: func(dev *cudasys.CUdevice, _ int32) cudasys.CUresult {
@@ -366,7 +369,11 @@ func TestCloseReportsReleaseFailure(t *testing.T) {
 		},
 		CuCtxSetCurrent: func(cudasys.CUcontext) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
 		CuDevicePrimaryCtxRelease: func(cudasys.CUdevice) cudasys.CUresult {
-			return cudasys.CUDA_ERROR_INVALID_DEVICE
+			releaseCalls.Add(1)
+			if releaseFails.Load() {
+				return cudasys.CUDA_ERROR_INVALID_DEVICE
+			}
+			return cudasys.CUDA_SUCCESS
 		},
 	})
 
@@ -377,6 +384,16 @@ func TestCloseReportsReleaseFailure(t *testing.T) {
 	}
 	if err := ctx.Close(); !errors.Is(err, ErrInvalidDevice) {
 		t.Errorf("close err = %v, want ErrInvalidDevice", err)
+	}
+	if ctx.closed.Load() {
+		t.Errorf("context marked closed after a failed release")
+	}
+	releaseFails.Store(false)
+	if err := ctx.Close(); err != nil {
+		t.Fatalf("retry close: %v", err)
+	}
+	if releaseCalls.Load() != 2 {
+		t.Errorf("release calls = %d, want 2", releaseCalls.Load())
 	}
 }
 

@@ -799,11 +799,13 @@ stream.Synchronize(ctx)
   (`cuGraphLaunch`). It returns after the driver accepts the work, not after the
   GPU finishes; synchronize before reading outputs.
 - `(*GraphExec).Update(graph *Graph) error` re-applies a recaptured graph's node
-  parameters to the executable without re-instantiating (`cuGraphExecUpdate`),
-  which is cheap for repeated fixed-shape work. It returns
-  `ErrGraphExecUpdateFailure` when the topology changed too much to update in
-  place (re-instantiate then), and `ErrSymbolUnavailable` on a driver that lacks
-  the symbol.
+  parameters to the executable without re-instantiating, which is cheap for
+  repeated fixed-shape work. It binds the legacy four-argument `cuGraphExecUpdate`
+  (CUDA 10.2+) and inspects its update-result out-parameter, so it returns
+  `ErrGraphExecUpdateFailure` when the driver declines the update (for example a
+  topology change) even if the call itself reports success; re-instantiate then.
+  It returns `ErrSymbolUnavailable` on a driver that lacks the symbol. The CUDA 12
+  result-info form (`cuGraphExecUpdate_v2`) is intentionally not used.
 - `(*Graph).Close()` and `(*GraphExec).Close()` release the handles
   (`cuGraphDestroy`, `cuGraphExecDestroy`).
 
@@ -877,7 +879,11 @@ ErrFileNotFound, ErrSharedObjectSymbolNotFound, ErrSharedObjectInitFailed,
 ErrOperatingSystem, ErrInvalidHandle, ErrIllegalState, ErrNotFound,
 ErrNotReady, ErrIllegalAddress, ErrLaunchOutOfResources, ErrLaunchTimeout,
 ErrLaunchFailed, ErrNotPermitted, ErrNotSupported, ErrSystemNotReady,
-ErrSystemDriverMismatch, ErrUnknown
+ErrSystemDriverMismatch, ErrStreamCaptureUnsupported, ErrStreamCaptureInvalidated,
+ErrStreamCaptureMerge, ErrStreamCaptureUnmatched, ErrStreamCaptureUnjoined,
+ErrStreamCaptureIsolation, ErrStreamCaptureImplicit, ErrCapturedEvent,
+ErrStreamCaptureWrongThread, ErrTimeout, ErrGraphExecUpdateFailure,
+ErrExternalDevice, ErrUnknown
 ```
 
 Go-side sentinels:
@@ -890,7 +896,7 @@ Go-side sentinels:
 - `ErrNilBuffer`: a method was called on a nil `*Buffer[T]` or nil `*HostBuffer[T]`.
 - `ErrBufferClosed`: a method was called on a `*Buffer[T]` or `*HostBuffer[T]` after `Close`.
 - `ErrLengthMismatch`: a copy was given mismatched or empty slices/buffers.
-- `ErrInvalidLength`: `Alloc` or `AllocHost` was given a non-positive or overflowing element count, or an offset copy was given a negative offset or non-positive count.
+- `ErrInvalidLength`: `Alloc` or `AllocHost` was given a non-positive or overflowing element count, an offset copy was given a negative offset or non-positive count, or `LoadModuleEx` was given a log buffer size that is negative or larger than the cap.
 - `ErrOutOfRange`: an offset copy's range (offset plus count) does not fit the buffer.
 - `ErrNilModule`: a method was called on a nil `*Module`.
 - `ErrModuleClosed`: a method was called on a `*Module` after `Close`.
@@ -903,7 +909,19 @@ Go-side sentinels:
 - `ErrInvalidStreamPriority`: `WithStreamPriority` received a value that cannot fit in CUDA's C `int` priority parameter.
 - `ErrInvalidLaunchConfig`: `Function.Launch` or `LaunchOn` was given zero grid or block dimensions.
 - `ErrNilKernelArg`: `Function.Launch` or `LaunchOn` was given a nil `KernelArg`.
+- `ErrInvalidArgSize`: a raw kernel argument had an unsupported size.
 - `ErrContextMismatch`: a kernel argument or stream belongs to a different context from the function.
+- `ErrUnsupportedFillType`: `Buffer.Fill` or `FillAsync` was called on an 8-byte element type, which the driver has no memset for.
+- `ErrInvalidBlockSize`: an occupancy query was given a block size that is not positive or does not fit CUDA's C `int`.
+- `ErrNilEvent`: a method was called on a nil `*Event`.
+- `ErrEventClosed`: a method was called on an `*Event` after `Close`.
+- `ErrEventTimingDisabled`: `Event.Elapsed` was called on an event created without timing.
+- `ErrNilGlobal`: a method was called on a nil `*Global`.
+- `ErrEmptyGlobalName`: `Module.Global` was given an empty name.
+- `ErrInvalidGlobalName`: `Module.Global` was given a name containing a null byte.
+- `ErrNilGraph` / `ErrGraphClosed`: a method was called on a nil or closed `*Graph`.
+- `ErrNilGraphExec` / `ErrGraphExecClosed`: a method was called on a nil or closed `*GraphExec`.
+- `ErrNilMemPool`: a method was called on a nil `*MemoryPool`.
 
 Returned CUDA errors for codes outside the table still match with:
 

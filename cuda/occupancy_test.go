@@ -2,6 +2,7 @@ package cuda
 
 import (
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/eitamring/gocudrv/cudasys"
@@ -58,6 +59,7 @@ func TestMaxActiveBlocksPerSMRejects(t *testing.T) {
 		{"nil function", func() error { var f *Function; _, e := f.MaxActiveBlocksPerSM(256, 0); return e }, ErrNilFunction},
 		{"zero block size", func() error { _, e := fn.MaxActiveBlocksPerSM(0, 0); return e }, ErrInvalidBlockSize},
 		{"negative block size", func() error { _, e := fn.MaxActiveBlocksPerSM(-1, 0); return e }, ErrInvalidBlockSize},
+		{"block size overflows int32", func() error { _, e := fn.MaxActiveBlocksPerSM(math.MaxInt32+1, 0); return e }, ErrInvalidBlockSize},
 		{"negative dynamic shared", func() error { _, e := fn.MaxActiveBlocksPerSM(256, -1); return e }, ErrInvalidLength},
 	}
 	for _, tc := range cases {
@@ -106,6 +108,9 @@ func TestSuggestedBlockSizeRejects(t *testing.T) {
 	_, fn := occupancyTestFunction(t)
 	if _, _, err := fn.SuggestedBlockSize(-1, 0); !errors.Is(err, ErrInvalidLength) {
 		t.Errorf("negative shared err = %v, want ErrInvalidLength", err)
+	}
+	if _, _, err := fn.SuggestedBlockSize(0, math.MaxInt32+1); !errors.Is(err, ErrInvalidLength) {
+		t.Errorf("block-size-limit overflow err = %v, want ErrInvalidLength", err)
 	}
 	var nilFn *Function
 	if _, _, err := nilFn.SuggestedBlockSize(0, 0); !errors.Is(err, ErrNilFunction) {

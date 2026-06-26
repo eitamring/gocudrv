@@ -15,6 +15,10 @@ func TestCUresultName(t *testing.T) {
 		{"no device", CUDA_ERROR_NO_DEVICE, "CUDA_ERROR_NO_DEVICE"},
 		{"invalid context", CUDA_ERROR_INVALID_CONTEXT, "CUDA_ERROR_INVALID_CONTEXT"},
 		{"invalid handle", CUDA_ERROR_INVALID_HANDLE, "CUDA_ERROR_INVALID_HANDLE"},
+		{"stream capture unsupported", CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED, "CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED"},
+		{"stream capture wrong thread", CUDA_ERROR_STREAM_CAPTURE_WRONG_THREAD, "CUDA_ERROR_STREAM_CAPTURE_WRONG_THREAD"},
+		{"graph exec update failure", CUDA_ERROR_GRAPH_EXEC_UPDATE_FAILURE, "CUDA_ERROR_GRAPH_EXEC_UPDATE_FAILURE"},
+		{"external device", CUDA_ERROR_EXTERNAL_DEVICE, "CUDA_ERROR_EXTERNAL_DEVICE"},
 		{"unknown code returns empty", CUresult(7777), ""},
 	}
 	for _, tc := range cases {

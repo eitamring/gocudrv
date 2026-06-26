@@ -105,7 +105,10 @@ type JITLog struct {
 	Error string
 }
 
-const defaultJITLogBytes = 8192
+const (
+	defaultJITLogBytes = 8192
+	maxJITLogBytes     = 16 << 20
+)
 
 // CUjit_option values used by LoadModuleEx.
 const (
@@ -127,12 +130,15 @@ func (c *Context) LoadModuleEx(image []byte, opts JITOptions) (*Module, JITLog, 
 	if len(image) == 0 {
 		return nil, JITLog{}, ErrEmptyImage
 	}
-	buf := nullTerminated(image)
-
 	size := opts.LogBufferBytes
-	if size <= 0 {
+	if size < 0 || size > maxJITLogBytes {
+		return nil, JITLog{}, ErrInvalidLength
+	}
+	if size == 0 {
 		size = defaultJITLogBytes
 	}
+	buf := nullTerminated(image)
+
 	infoBuf := make([]byte, size)
 	errBuf := make([]byte, size)
 	options := []int32{jitInfoLogBuffer, jitInfoLogBufferSizeBytes, jitErrorLogBuffer, jitErrorLogBufferSizeBytes}

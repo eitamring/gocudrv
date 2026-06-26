@@ -123,7 +123,7 @@ func (b *PitchedBuffer[T]) CopyFrom(ctx context.Context, src []T) error {
 	widthBytes := uint64(b.width) * elemSize[T]()
 	desc := cudasys.Memcpy2D{
 		SrcMemoryType: cudasys.MemoryTypeHost,
-		SrcHost:       uintptr(unsafe.Pointer(&src[0])),
+		SrcHost:       unsafe.Pointer(&src[0]),
 		SrcPitch:      widthBytes,
 		DstMemoryType: cudasys.MemoryTypeDevice,
 		DstDevice:     b.ptr,
@@ -162,7 +162,7 @@ func (b *PitchedBuffer[T]) CopyTo(ctx context.Context, dst []T) error {
 		SrcDevice:     b.ptr,
 		SrcPitch:      b.pitch,
 		DstMemoryType: cudasys.MemoryTypeHost,
-		DstHost:       uintptr(unsafe.Pointer(&dst[0])),
+		DstHost:       unsafe.Pointer(&dst[0]),
 		DstPitch:      widthBytes,
 		WidthInBytes:  widthBytes,
 		Height:        uint64(b.height),

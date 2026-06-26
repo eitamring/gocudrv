@@ -215,3 +215,16 @@ func TestSingleWorkerGoroutine(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func BenchmarkDoRoundTrip(b *testing.B) {
+	e := New()
+	defer func() { _ = e.Close() }()
+	fn := func() error { return nil }
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := e.Do(fn); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

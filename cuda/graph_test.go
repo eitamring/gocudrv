@@ -277,6 +277,17 @@ func TestGraphExecUpdateFailure(t *testing.T) {
 	}
 }
 
+func TestGraphExecUpdateDeclined(t *testing.T) {
+	ctx, g, exec := newGraphExecFixture(t)
+	ctx.driver.CuGraphExecUpdate = func(_ cudasys.CUgraphExec, _ cudasys.CUgraph, _ *cudasys.CUgraphNode, result *int32) cudasys.CUresult {
+		*result = 2 // CU_GRAPH_EXEC_UPDATE_ERROR_TOPOLOGY_CHANGED
+		return cudasys.CUDA_SUCCESS
+	}
+	if err := exec.Update(g); !errors.Is(err, ErrGraphExecUpdateFailure) {
+		t.Errorf("Update = %v, want ErrGraphExecUpdateFailure", err)
+	}
+}
+
 func TestGraphExecUpdateUnavailable(t *testing.T) {
 	// The fixture driver does not bind cuGraphExecUpdate.
 	_, g, exec := newGraphExecFixture(t)

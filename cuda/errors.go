@@ -83,6 +83,17 @@ var (
 	ErrNotSupported               = cudaresult.ErrNotSupported
 	ErrSystemNotReady             = cudaresult.ErrSystemNotReady
 	ErrSystemDriverMismatch       = cudaresult.ErrSystemDriverMismatch
+	ErrStreamCaptureUnsupported   = cudaresult.ErrStreamCaptureUnsupported
+	ErrStreamCaptureInvalidated   = cudaresult.ErrStreamCaptureInvalidated
+	ErrStreamCaptureMerge         = cudaresult.ErrStreamCaptureMerge
+	ErrStreamCaptureUnmatched     = cudaresult.ErrStreamCaptureUnmatched
+	ErrStreamCaptureUnjoined      = cudaresult.ErrStreamCaptureUnjoined
+	ErrStreamCaptureIsolation     = cudaresult.ErrStreamCaptureIsolation
+	ErrStreamCaptureImplicit      = cudaresult.ErrStreamCaptureImplicit
+	ErrCapturedEvent              = cudaresult.ErrCapturedEvent
+	ErrStreamCaptureWrongThread   = cudaresult.ErrStreamCaptureWrongThread
+	ErrTimeout                    = cudaresult.ErrTimeout
 	ErrGraphExecUpdateFailure     = cudaresult.ErrGraphExecUpdateFailure
+	ErrExternalDevice             = cudaresult.ErrExternalDevice
 	ErrUnknown                    = cudaresult.ErrUnknown
 )

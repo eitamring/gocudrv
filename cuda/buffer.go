@@ -446,16 +446,32 @@ func (b *Buffer[T]) Fill(ctx context.Context, v T) error {
 		return ErrBufferClosed
 	}
 	count := uint64(b.length)
+	size := unsafe.Sizeof(v)
+	val := fillBits(v)
 	return b.ctx.doWait(ctx, func() error {
-		switch unsafe.Sizeof(v) {
+		switch size {
 		case 1:
-			return cudaresult.MemsetD8(b.ctx.driver, b.ptr, *(*uint8)(unsafe.Pointer(&v)), count)
+			return cudaresult.MemsetD8(b.ctx.driver, b.ptr, uint8(val), count)
 		case 2:
-			return cudaresult.MemsetD16(b.ctx.driver, b.ptr, *(*uint16)(unsafe.Pointer(&v)), count)
+			return cudaresult.MemsetD16(b.ctx.driver, b.ptr, uint16(val), count)
 		default:
-			return cudaresult.MemsetD32(b.ctx.driver, b.ptr, *(*uint32)(unsafe.Pointer(&v)), count)
+			return cudaresult.MemsetD32(b.ctx.driver, b.ptr, val, count)
 		}
 	})
+}
+
+// fillBits returns the bytes of v widened to a uint32, the value the memset
+// primitives take. Reading v here keeps it off the heap: the pointer does not
+// escape into the launch closure.
+func fillBits[T Supported](v T) uint32 {
+	switch unsafe.Sizeof(v) {
+	case 1:
+		return uint32(*(*uint8)(unsafe.Pointer(&v)))
+	case 2:
+		return uint32(*(*uint16)(unsafe.Pointer(&v)))
+	default:
+		return *(*uint32)(unsafe.Pointer(&v))
+	}
 }
 
 // FillAsync enqueues a memset that sets every element of the buffer to v on
@@ -487,14 +503,16 @@ func (b *Buffer[T]) FillAsync(ctx context.Context, stream *Stream, v T) error {
 		return ErrContextMismatch
 	}
 	count := uint64(b.length)
+	size := unsafe.Sizeof(v)
+	val := fillBits(v)
 	return b.ctx.doWait(ctx, func() error {
-		switch unsafe.Sizeof(v) {
+		switch size {
 		case 1:
-			return cudaresult.MemsetD8Async(b.ctx.driver, b.ptr, *(*uint8)(unsafe.Pointer(&v)), count, stream.raw)
+			return cudaresult.MemsetD8Async(b.ctx.driver, b.ptr, uint8(val), count, stream.raw)
 		case 2:
-			return cudaresult.MemsetD16Async(b.ctx.driver, b.ptr, *(*uint16)(unsafe.Pointer(&v)), count, stream.raw)
+			return cudaresult.MemsetD16Async(b.ctx.driver, b.ptr, uint16(val), count, stream.raw)
 		default:
-			return cudaresult.MemsetD32Async(b.ctx.driver, b.ptr, *(*uint32)(unsafe.Pointer(&v)), count, stream.raw)
+			return cudaresult.MemsetD32Async(b.ctx.driver, b.ptr, val, count, stream.raw)
 		}
 	})
 }

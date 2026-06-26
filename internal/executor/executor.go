@@ -35,6 +35,12 @@ type task struct {
 	result chan error
 }
 
+// resultPool recycles the per-call completion channels so a submission on a hot
+// path does not allocate one each time. A channel is only returned to the pool
+// once its result has been received (or it was never handed to the executor), so
+// every channel taken from the pool is empty.
+var resultPool = sync.Pool{New: func() any { return make(chan error, 1) }}
+
 // Executor runs functions on a single OS thread. Construct one per CUDA
 // context so that "current context" stays stable across calls. The pinned
 // goroutine never unlocks its OS thread; when Close stops it, the Go
@@ -95,19 +101,22 @@ func (e *Executor) submit(ctx context.Context, fn func() error) (chan error, err
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	res := make(chan error, 1)
+	res := resultPool.Get().(chan error)
 	e.mu.RLock()
 	if e.closed {
 		e.mu.RUnlock()
+		resultPool.Put(res)
 		return nil, ErrExecutorClosed
 	}
 	select {
 	case e.tasks <- task{fn: fn, result: res}:
 	case <-ctx.Done():
 		e.mu.RUnlock()
+		resultPool.Put(res)
 		return nil, ctx.Err()
 	case <-e.done:
 		e.mu.RUnlock()
+		resultPool.Put(res)
 		return nil, ErrExecutorClosed
 	}
 	e.mu.RUnlock()
@@ -127,8 +136,11 @@ func (e *Executor) DoCtx(ctx context.Context, fn func() error) error {
 	}
 	select {
 	case err := <-res:
+		resultPool.Put(res)
 		return err
 	case <-ctx.Done():
+		// fn is still in flight and the executor will send to res later, so the
+		// channel cannot be recycled; let it be collected instead.
 		return ctx.Err()
 	}
 }
@@ -142,7 +154,9 @@ func (e *Executor) DoCtxWait(ctx context.Context, fn func() error) error {
 	if err != nil {
 		return err
 	}
-	return <-res
+	err = <-res
+	resultPool.Put(res)
+	return err
 }
 
 // Close stops the executor goroutine and waits for it to exit, including

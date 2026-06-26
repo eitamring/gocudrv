@@ -170,8 +170,8 @@ func (e *GraphExec) Update(graph *Graph) error {
 	if graph == nil {
 		return ErrNilGraph
 	}
-	e.opMu.RLock()
-	defer e.opMu.RUnlock()
+	e.opMu.Lock()
+	defer e.opMu.Unlock()
 	if e.closed {
 		return ErrGraphExecClosed
 	}

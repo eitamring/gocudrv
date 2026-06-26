@@ -703,6 +703,12 @@ func TestLoadModuleExRejects(t *testing.T) {
 	if _, _, err := ctx.LoadModuleEx(nil, JITOptions{}); !errors.Is(err, ErrEmptyImage) {
 		t.Errorf("empty image = %v, want ErrEmptyImage", err)
 	}
+	if _, _, err := ctx.LoadModuleEx([]byte("x"), JITOptions{LogBufferBytes: -1}); !errors.Is(err, ErrInvalidLength) {
+		t.Errorf("negative log buffer = %v, want ErrInvalidLength", err)
+	}
+	if _, _, err := ctx.LoadModuleEx([]byte("x"), JITOptions{LogBufferBytes: maxJITLogBytes + 1}); !errors.Is(err, ErrInvalidLength) {
+		t.Errorf("oversized log buffer = %v, want ErrInvalidLength", err)
+	}
 }
 
 func TestNullTerminated(t *testing.T) {

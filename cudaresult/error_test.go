@@ -44,6 +44,8 @@ func TestErrorIs(t *testing.T) {
 		{"non error", errors.New("other"), ErrOutOfMemory, false},
 		{"wrapped matches via Unwrap", &wrappedErr{inner: &Error{Code: cudasys.CUDA_ERROR_NO_DEVICE}}, ErrNoDevice, true},
 		{"fmt errorf wrap matches", fmt.Errorf("ctx: %w", &Error{Code: cudasys.CUDA_ERROR_INVALID_DEVICE}), ErrInvalidDevice, true},
+		{"stream capture invalidated", &Error{Code: cudasys.CUDA_ERROR_STREAM_CAPTURE_INVALIDATED, Op: "cuStreamEndCapture"}, ErrStreamCaptureInvalidated, true},
+		{"external device", &Error{Code: cudasys.CUDA_ERROR_EXTERNAL_DEVICE}, ErrExternalDevice, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
