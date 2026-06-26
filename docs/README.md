@@ -13,6 +13,9 @@ rather than the full roadmap.
   patterns.
 - [Public API](api/cuda.md): exported `cuda` package functions, types, and
   error behavior.
+- [Sibling module integration](integration.md): the contract for modules built
+  on top of gocudrv (handle ownership, context and stream sharing, buffer
+  lifetime, optional symbols).
 - [Internals](internals.md): package layering, dynamic loading, raw bindings,
   and CUDA result mapping.
 
