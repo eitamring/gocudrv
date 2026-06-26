@@ -95,6 +95,21 @@ go run ./examples/event-pipeline
 This runs two vector-add batches through a small event-ordered pipeline and
 prints GPU elapsed time from CUDA events.
 
+## Benchmarks
+
+```bash
+go test -bench . ./cuda                      # wrapper and executor overhead (no GPU)
+go test -tags cuda_integration -bench . ./cuda  # real bandwidth and launch overhead (needs a GPU)
+```
+
+The default benchmarks run against a fake driver, so they measure gocudrv's own
+CPU enqueue cost (executor round trip, locking, argument packing). The
+`cuda_integration` benchmarks measure real device-copy bandwidth and launch
+overhead; `BenchmarkRealAsyncPinnedCopy` reports a `gpu-us/op` metric measured
+with CUDA events alongside the wall-time `ns/op`, so the GPU transfer time can
+be read apart from the CPU submit time. None of them need OCR assets or model
+files.
+
 ## Docs
 
 - [Getting started](docs/getting-started.md)
