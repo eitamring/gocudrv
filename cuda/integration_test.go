@@ -968,3 +968,29 @@ func mustHost(t *testing.T, ctx *Context, src []float32) *HostBuffer[float32] {
 	copy(h.Slice(), src)
 	return h
 }
+
+func TestRealModuleJITLog(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+
+	// Deliberately malformed PTX so the JIT compile fails and writes a log.
+	bad := []byte(".version 7.0\n.target sm_50\n.address_size 64\nthis is not valid ptx\n")
+	mod, log, err := ctx.LoadModuleEx(bad, JITOptions{})
+	if err == nil {
+		_ = mod.Close()
+		t.Fatal("expected a JIT compile error for malformed PTX")
+	}
+	if log.Error == "" {
+		t.Error("expected a non-empty JIT error log on compile failure")
+	} else {
+		t.Logf("JIT error log: %s", log.Error)
+	}
+}

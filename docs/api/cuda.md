@@ -617,6 +617,13 @@ if err != nil {
 - `(*Context).LoadModuleFromFile(path string) (*Module, error)` reads the
   file at `path` and forwards the bytes to `LoadModule`. Empty path is
   rejected with `ErrEmptyImage`; read errors are wrapped with the path.
+- `(*Context).LoadModuleEx(image []byte, opts JITOptions) (*Module, JITLog, error)`
+  loads with JIT options via `cuModuleLoadDataEx` and returns the driver's info
+  and error logs. The returned `JITLog.Error` is filled even when the load
+  fails, so a PTX compile error surfaces useful diagnostics. `JITOptions` carries
+  `LogBufferBytes` (log buffer size, default when `<= 0`) and `MaxRegisters`
+  (`CU_JIT_MAX_REGISTERS`, `0` leaves the driver default). The simple
+  `LoadModule` is unchanged.
 - `(*Module).Function(name string) (*Function, error)` looks up a kernel.
   The name is converted to a null-terminated byte sequence before being
   passed to `cuModuleGetFunction`.

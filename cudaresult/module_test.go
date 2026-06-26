@@ -222,3 +222,36 @@ func TestModuleGetGlobal(t *testing.T) {
 		})
 	}
 }
+
+func TestModuleLoadDataEx(t *testing.T) {
+	img := []byte("ptx\x00")
+	if _, err := ModuleLoadDataEx(nil, &img[0], nil, nil); !errors.Is(err, ErrNotInitialized) {
+		t.Errorf("nil driver = %v, want ErrNotInitialized", err)
+	}
+	if _, err := ModuleLoadDataEx(&cudasys.Driver{}, &img[0], nil, nil); !errors.Is(err, ErrNotInitialized) {
+		t.Errorf("nil func = %v, want ErrNotInitialized", err)
+	}
+
+	var gotN uint32
+	d := &cudasys.Driver{CuModuleLoadDataEx: func(mod *cudasys.CUmodule, _ *byte, n uint32, _ *int32, _ *uintptr) cudasys.CUresult {
+		gotN = n
+		*mod = 0x4242
+		return cudasys.CUDA_SUCCESS
+	}}
+	opts := []int32{3, 4, 5, 6}
+	vals := []uintptr{1, 8192, 2, 8192}
+	mod, err := ModuleLoadDataEx(d, &img[0], opts, vals)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if mod != 0x4242 || gotN != 4 {
+		t.Errorf("mod=%#x n=%d, want 0x4242, 4", mod, gotN)
+	}
+
+	dErr := &cudasys.Driver{CuModuleLoadDataEx: func(*cudasys.CUmodule, *byte, uint32, *int32, *uintptr) cudasys.CUresult {
+		return cudasys.CUDA_ERROR_INVALID_PTX
+	}}
+	if _, err := ModuleLoadDataEx(dErr, &img[0], opts, vals); !errors.Is(err, ErrInvalidPTX) {
+		t.Errorf("err = %v, want ErrInvalidPTX", err)
+	}
+}
