@@ -3,6 +3,7 @@ package cuda
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -487,4 +488,138 @@ func TestFunctionLaunchOnHoldsStreamLockDuringCall(t *testing.T) {
 		t.Errorf("stream close: %v", err)
 	}
 	_ = mod.Close()
+}
+
+func newEscapeFixture(t *testing.T) (*Module, *Function, *atomic.Int32, *atomic.Uint64) {
+	t.Helper()
+	var launches atomic.Int32
+	var firstParam atomic.Uint64
+	drv := (&launchFake{}).driver(t)
+	drv.CuLaunchKernel = func(_ cudasys.CUfunction, _, _, _, _, _, _, _ uint32, _ cudasys.CUstream, params *unsafe.Pointer, _ *unsafe.Pointer) cudasys.CUresult {
+		launches.Add(1)
+		if params != nil {
+			firstParam.Store(*(*uint64)(*params))
+		}
+		return cudasys.CUDA_SUCCESS
+	}
+	installDriver(t, drv)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+	mod, err := ctx.LoadModule([]byte{'P', 0})
+	if err != nil {
+		t.Fatalf("LoadModule: %v", err)
+	}
+	t.Cleanup(func() { _ = mod.Close() })
+	fn, err := mod.Function("k")
+	if err != nil {
+		t.Fatalf("Function: %v", err)
+	}
+	return mod, fn, &launches, &firstParam
+}
+
+func TestLaunchArgDevicePtr(t *testing.T) {
+	_, fn, launches, firstParam := newEscapeFixture(t)
+	if err := fn.Launch(context.Background(), LaunchConfig1D(256, 256), ArgDevicePtr(0xABCD)); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if launches.Load() != 1 {
+		t.Errorf("launches = %d, want 1", launches.Load())
+	}
+	if firstParam.Load() != 0xABCD {
+		t.Errorf("packed device pointer = %#x, want 0xabcd", firstParam.Load())
+	}
+}
+
+func TestLaunchArgRaw(t *testing.T) {
+	_, fn, launches, firstParam := newEscapeFixture(t)
+	v := uint32(0xCAFE)
+	if err := fn.Launch(context.Background(), LaunchConfig1D(256, 256), ArgRaw(unsafe.Pointer(&v), 4)); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if launches.Load() != 1 {
+		t.Errorf("launches = %d, want 1", launches.Load())
+	}
+	if firstParam.Load() != 0xCAFE {
+		t.Errorf("packed raw value = %#x, want 0xcafe", firstParam.Load())
+	}
+}
+
+func TestLaunchArgRawRejects(t *testing.T) {
+	_, fn, launches, _ := newEscapeFixture(t)
+	v := uint32(1)
+	cases := []struct {
+		name string
+		arg  KernelArg
+		want error
+	}{
+		{"nil value", ArgRaw(nil, 4), ErrNilKernelArg},
+		{"zero size", ArgRaw(unsafe.Pointer(&v), 0), ErrInvalidArgSize},
+		{"too big", ArgRaw(unsafe.Pointer(&v), maxRawArgBytes+1), ErrInvalidArgSize},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := fn.Launch(context.Background(), LaunchConfig1D(256, 256), tc.arg); !errors.Is(err, tc.want) {
+				t.Errorf("err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+	if launches.Load() != 0 {
+		t.Errorf("a rejected launch reached the driver: %d", launches.Load())
+	}
+}
+
+func TestLaunchManyArgsSpill(t *testing.T) {
+	_, fn, launches, _ := newEscapeFixture(t)
+	args := make([]KernelArg, 20)
+	for i := range args {
+		args[i] = ArgValue(int32(i))
+	}
+	if err := fn.Launch(context.Background(), LaunchConfig1D(256, 256), args...); err != nil {
+		t.Fatalf("Launch with 20 args: %v", err)
+	}
+	var big [16]byte
+	big[0] = 0x42
+	if err := fn.Launch(context.Background(), LaunchConfig1D(256, 256), ArgRaw(unsafe.Pointer(&big), 16)); err != nil {
+		t.Fatalf("Launch with 16-byte raw arg: %v", err)
+	}
+	if launches.Load() != 2 {
+		t.Errorf("launches = %d, want 2", launches.Load())
+	}
+}
+
+func TestLaunchModuleClosed(t *testing.T) {
+	mod, fn, launches, _ := newEscapeFixture(t)
+	if err := mod.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := fn.Launch(context.Background(), LaunchConfig1D(256, 256), ArgDevicePtr(0xABCD)); !errors.Is(err, ErrModuleClosed) {
+		t.Errorf("launch after close = %v, want ErrModuleClosed", err)
+	}
+	if launches.Load() != 0 {
+		t.Error("launch reached the driver after module close")
+	}
+}
+
+func TestLaunchModuleCloseRace(t *testing.T) {
+	mod, fn, _, _ := newEscapeFixture(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := fn.Launch(context.Background(), LaunchConfig1D(256, 256), ArgDevicePtr(0xABCD))
+			if err != nil && !errors.Is(err, ErrModuleClosed) {
+				t.Errorf("unexpected launch error: %v", err)
+			}
+		}()
+	}
+	_ = mod.Close()
+	wg.Wait()
 }
