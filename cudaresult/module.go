@@ -15,6 +15,27 @@ func ModuleLoadData(d *cudasys.Driver, image *byte) (cudasys.CUmodule, error) {
 	return mod, nil
 }
 
+// ModuleLoadDataEx loads a module with JIT options. options and values are the
+// parallel CUjit_option / optionValue arrays cuModuleLoadDataEx expects; values
+// holds pointers and integers packed as uintptr. The caller owns any buffers the
+// values point at and must keep them alive across the call.
+func ModuleLoadDataEx(d *cudasys.Driver, image *byte, options []int32, values []uintptr) (cudasys.CUmodule, error) {
+	if d == nil || d.CuModuleLoadDataEx == nil {
+		return 0, ErrNotInitialized
+	}
+	var optPtr *int32
+	var valPtr *uintptr
+	if len(options) > 0 {
+		optPtr = &options[0]
+		valPtr = &values[0]
+	}
+	var mod cudasys.CUmodule
+	if err := check("cuModuleLoadDataEx", d.CuModuleLoadDataEx(&mod, image, uint32(len(options)), optPtr, valPtr)); err != nil {
+		return 0, err
+	}
+	return mod, nil
+}
+
 // ModuleUnload releases a module previously returned by ModuleLoadData.
 func ModuleUnload(d *cudasys.Driver, mod cudasys.CUmodule) error {
 	if d == nil || d.CuModuleUnload == nil {

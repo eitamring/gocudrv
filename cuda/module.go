@@ -1,6 +1,7 @@
 package cuda
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -48,11 +49,7 @@ func (c *Context) LoadModule(image []byte) (*Module, error) {
 	if len(image) == 0 {
 		return nil, ErrEmptyImage
 	}
-	buf := image
-	if buf[len(buf)-1] != 0 {
-		buf = make([]byte, len(image)+1)
-		copy(buf, image)
-	}
+	buf := nullTerminated(image)
 
 	var raw cudasys.CUmodule
 	err := c.doWait(context.Background(), func() error {
@@ -68,6 +65,106 @@ func (c *Context) LoadModule(image []byte) (*Module, error) {
 		return nil, err
 	}
 	return &Module{ctx: c, raw: raw}, nil
+}
+
+// nullTerminated returns image unchanged if it already ends in a null byte, or a
+// fresh null-terminated copy otherwise, so the original slice is never mutated.
+// PTX images must be null-terminated for cuModuleLoadData(Ex).
+func nullTerminated(image []byte) []byte {
+	if len(image) > 0 && image[len(image)-1] == 0 {
+		return image
+	}
+	buf := make([]byte, len(image)+1)
+	copy(buf, image)
+	return buf
+}
+
+// trimNull returns the bytes of b up to the first null, as a string.
+func trimNull(b []byte) string {
+	if i := bytes.IndexByte(b, 0); i >= 0 {
+		return string(b[:i])
+	}
+	return string(b)
+}
+
+// JITOptions tunes a JIT compile in LoadModuleEx. The zero value requests info
+// and error logs at a default buffer size with no other tuning.
+type JITOptions struct {
+	// LogBufferBytes is the size of each of the info and error log buffers. A
+	// value <= 0 uses a default size.
+	LogBufferBytes int
+	// MaxRegisters caps registers per thread (CU_JIT_MAX_REGISTERS). 0 leaves it
+	// at the driver default.
+	MaxRegisters int
+}
+
+// JITLog holds the info and error logs the driver produced while loading a
+// module. Error is populated even when the load fails.
+type JITLog struct {
+	Info  string
+	Error string
+}
+
+const defaultJITLogBytes = 8192
+
+// CUjit_option values used by LoadModuleEx.
+const (
+	jitMaxRegisters            int32 = 0
+	jitInfoLogBuffer           int32 = 3
+	jitInfoLogBufferSizeBytes  int32 = 4
+	jitErrorLogBuffer          int32 = 5
+	jitErrorLogBufferSizeBytes int32 = 6
+)
+
+// LoadModuleEx loads a module like LoadModule but with JIT options, returning
+// the driver's info and error logs. The error log is filled even when the load
+// fails, so a PTX compile error surfaces useful diagnostics. Use LoadModule for
+// the simple case.
+func (c *Context) LoadModuleEx(image []byte, opts JITOptions) (*Module, JITLog, error) {
+	if c == nil {
+		return nil, JITLog{}, ErrNilContext
+	}
+	if len(image) == 0 {
+		return nil, JITLog{}, ErrEmptyImage
+	}
+	buf := nullTerminated(image)
+
+	size := opts.LogBufferBytes
+	if size <= 0 {
+		size = defaultJITLogBytes
+	}
+	infoBuf := make([]byte, size)
+	errBuf := make([]byte, size)
+	options := []int32{jitInfoLogBuffer, jitInfoLogBufferSizeBytes, jitErrorLogBuffer, jitErrorLogBufferSizeBytes}
+	values := []uintptr{
+		uintptr(unsafe.Pointer(&infoBuf[0])),
+		uintptr(size),
+		uintptr(unsafe.Pointer(&errBuf[0])),
+		uintptr(size),
+	}
+	if opts.MaxRegisters > 0 {
+		options = append(options, jitMaxRegisters)
+		values = append(values, uintptr(opts.MaxRegisters))
+	}
+
+	var raw cudasys.CUmodule
+	err := c.doWait(context.Background(), func() error {
+		m, e := cudaresult.ModuleLoadDataEx(c.driver, (*byte)(unsafe.Pointer(&buf[0])), options, values)
+		if e != nil {
+			return e
+		}
+		raw = m
+		return nil
+	})
+	runtime.KeepAlive(buf)
+	runtime.KeepAlive(infoBuf)
+	runtime.KeepAlive(errBuf)
+
+	log := JITLog{Info: trimNull(infoBuf), Error: trimNull(errBuf)}
+	if err != nil {
+		return nil, log, err
+	}
+	return &Module{ctx: c, raw: raw}, log, nil
 }
 
 // LoadModuleFromFile reads path and forwards the bytes to LoadModule. An
