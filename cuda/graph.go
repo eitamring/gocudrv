@@ -155,9 +155,7 @@ func (e *GraphExec) Launch(ctx context.Context, stream *Stream) error {
 	if stream.ctx != e.ctx {
 		return ErrContextMismatch
 	}
-	return e.ctx.doWait(ctx, func() error {
-		return cudaresult.GraphLaunch(e.ctx.driver, e.raw, stream.raw)
-	})
+	return e.ctx.graphLaunch(ctx, e.raw, stream.raw)
 }
 
 // Update re-applies graph's node parameters to this executable without

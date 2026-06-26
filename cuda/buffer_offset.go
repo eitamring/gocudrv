@@ -5,7 +5,6 @@ import (
 	"runtime"
 	"unsafe"
 
-	"github.com/eitamring/gocudrv/cudaresult"
 	"github.com/eitamring/gocudrv/cudasys"
 )
 
@@ -44,9 +43,7 @@ func (b *Buffer[T]) CopyFromAt(ctx context.Context, dstOffset int, src []T) erro
 	srcPtr := (*byte)(unsafe.Pointer(&src[0]))
 	dst := b.offsetPtr(dstOffset)
 	bytes := uint64(len(src)) * elemSize[T]()
-	err := b.ctx.doWait(ctx, func() error {
-		return cudaresult.MemcpyHtoD(b.ctx.driver, dst, srcPtr, bytes)
-	})
+	err := b.ctx.memcpyHtoD(ctx, dst, srcPtr, bytes)
 	runtime.KeepAlive(src)
 	return err
 }
@@ -72,9 +69,7 @@ func (b *Buffer[T]) CopyToAt(ctx context.Context, dst []T, srcOffset int) error 
 	dstPtr := (*byte)(unsafe.Pointer(&dst[0]))
 	src := b.offsetPtr(srcOffset)
 	bytes := uint64(len(dst)) * elemSize[T]()
-	err := b.ctx.doWait(ctx, func() error {
-		return cudaresult.MemcpyDtoH(b.ctx.driver, dstPtr, src, bytes)
-	})
+	err := b.ctx.memcpyDtoH(ctx, dstPtr, src, bytes)
 	runtime.KeepAlive(dst)
 	return err
 }
@@ -113,9 +108,7 @@ func (b *Buffer[T]) CopyToDeviceAt(ctx context.Context, dstOffset int, dst *Buff
 	srcP := b.offsetPtr(srcOffset)
 	dstP := dst.offsetPtr(dstOffset)
 	bytes := uint64(n) * elemSize[T]()
-	return b.ctx.doWait(ctx, func() error {
-		return cudaresult.MemcpyDtoD(b.ctx.driver, dstP, srcP, bytes)
-	})
+	return b.ctx.memcpyDtoD(ctx, dstP, srcP, bytes)
 }
 
 // CopyToDeviceAtAsync enqueues the device-to-device offset copy of
@@ -159,7 +152,5 @@ func (b *Buffer[T]) CopyToDeviceAtAsync(ctx context.Context, stream *Stream, dst
 	srcP := b.offsetPtr(srcOffset)
 	dstP := dst.offsetPtr(dstOffset)
 	bytes := uint64(n) * elemSize[T]()
-	return b.ctx.doWait(ctx, func() error {
-		return cudaresult.MemcpyDtoDAsync(b.ctx.driver, dstP, srcP, bytes, stream.raw)
-	})
+	return b.ctx.memcpyDtoDAsync(ctx, dstP, srcP, bytes, stream.raw)
 }

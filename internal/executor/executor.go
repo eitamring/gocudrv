@@ -30,8 +30,23 @@ func (e *PanicError) Is(target error) bool {
 	return ok
 }
 
+// Job is a unit of work run on the executor's pinned thread. Implementing it
+// with a pooled pointer receiver lets a hot path submit work without allocating
+// a closure per call; DoCtx/DoCtxWait wrap a plain func in funcJob for the
+// callers that do not need that.
+type Job interface {
+	Run() error
+}
+
+// funcJob adapts a func to Job. Converting a func value to funcJob and passing
+// it as a Job interface does not allocate, so the closure-based methods stay as
+// cheap as before.
+type funcJob func() error
+
+func (f funcJob) Run() error { return f() }
+
 type task struct {
-	fn     func() error
+	job    Job
 	result chan error
 }
 
@@ -72,20 +87,20 @@ func (e *Executor) run() {
 	for {
 		select {
 		case t := <-e.tasks:
-			t.result <- e.runOne(t.fn)
+			t.result <- e.runOne(t.job)
 		case <-e.quit:
 			return
 		}
 	}
 }
 
-func (e *Executor) runOne(fn func() error) (err error) {
+func (e *Executor) runOne(j Job) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = &PanicError{Value: r}
 		}
 	}()
-	return fn()
+	return j.Run()
 }
 
 // Do is shorthand for DoCtx(context.Background(), fn). Use it when there is
@@ -94,7 +109,7 @@ func (e *Executor) Do(fn func() error) error {
 	return e.DoCtx(context.Background(), fn)
 }
 
-func (e *Executor) submit(ctx context.Context, fn func() error) (chan error, error) {
+func (e *Executor) submit(ctx context.Context, j Job) (chan error, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -109,7 +124,7 @@ func (e *Executor) submit(ctx context.Context, fn func() error) (chan error, err
 		return nil, ErrExecutorClosed
 	}
 	select {
-	case e.tasks <- task{fn: fn, result: res}:
+	case e.tasks <- task{job: j, result: res}:
 	case <-ctx.Done():
 		e.mu.RUnlock()
 		resultPool.Put(res)
@@ -130,7 +145,7 @@ func (e *Executor) submit(ctx context.Context, fn func() error) (chan error, err
 // during the call. Panics inside fn are recovered and surfaced as
 // *PanicError; the executor keeps running.
 func (e *Executor) DoCtx(ctx context.Context, fn func() error) error {
-	res, err := e.submit(ctx, fn)
+	res, err := e.submit(ctx, funcJob(fn))
 	if err != nil {
 		return err
 	}
@@ -150,7 +165,15 @@ func (e *Executor) DoCtx(ctx context.Context, fn func() error) error {
 // for operations that pass Go memory to foreign code, where returning early
 // would let the caller reuse memory while work is still in flight.
 func (e *Executor) DoCtxWait(ctx context.Context, fn func() error) error {
-	res, err := e.submit(ctx, fn)
+	return e.DoJob(ctx, funcJob(fn))
+}
+
+// DoJob runs j on the executor's pinned thread and, like DoCtxWait, waits for it
+// to finish once it is submitted. ctx may still prevent submission. It lets a
+// caller submit a pooled Job instead of a closure, so a hot path allocates
+// nothing per call. Panics inside Run are recovered and surfaced as *PanicError.
+func (e *Executor) DoJob(ctx context.Context, j Job) error {
+	res, err := e.submit(ctx, j)
 	if err != nil {
 		return err
 	}
