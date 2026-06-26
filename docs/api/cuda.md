@@ -690,6 +690,14 @@ if err := stream.Synchronize(context.Background()); err != nil {
   `n` elements, rounding the grid up.
 - `Arg(buffer)` passes a device-buffer pointer.
 - `ArgValue(value)` passes a fixed-size scalar value.
+- `ArgDevicePtr(ptr)` passes a raw `cudasys.CUdeviceptr` for an advanced caller
+  that holds one directly (for example from a sibling module or
+  `Buffer.DevicePtr`). It tracks no lifetime and takes no lock, so the caller
+  must keep the allocation alive across the launch.
+- `ArgRaw(value, size)` passes `size` bytes at `value` for argument types the
+  scalars do not cover (a small vector or struct). The bytes are copied when the
+  launch is built; `value` must be non-nil and `size` in `(0, 4096]`, else
+  `ErrNilKernelArg` / `ErrInvalidArgSize`.
 - `(*Function).Launch(ctx, cfg, args...)` submits the launch on the legacy
   default stream. Invalid zero dimensions return `ErrInvalidLaunchConfig`.
 - `(*Function).LaunchOn(ctx, stream, cfg, args...)` submits on `stream`.
@@ -703,6 +711,12 @@ After either method returns, the kernel may still be running. The launch-time
 locks only protect submission, not the whole kernel lifetime. Call
 `Context.Synchronize` or `Stream.Synchronize` before reading outputs or closing
 any buffer or module the kernel touched.
+
+Prefer `Arg(buffer)` and `ArgValue` for everything they cover: `Arg` holds the
+buffer's read lock across submission so the device pointer cannot be freed
+mid-launch, and `ArgValue` is type-checked. `ArgDevicePtr` and `ArgRaw` are
+escape hatches with neither guarantee, for raw handles from other CUDA code or
+argument types the scalars cannot express; the caller owns correctness.
 
 ## occupancy
 
