@@ -154,6 +154,7 @@ var expectedOptionalOrder = []string{
 	"cuGraphLaunch",
 	"cuGraphDestroy",
 	"cuGraphExecDestroy",
+	"cuGraphExecUpdate",
 	"cuDeviceGetPCIBusId",
 	"cuDeviceGetUuid",
 	"cuMemHostRegister_v2",

@@ -83,5 +83,6 @@ var (
 	ErrNotSupported               = cudaresult.ErrNotSupported
 	ErrSystemNotReady             = cudaresult.ErrSystemNotReady
 	ErrSystemDriverMismatch       = cudaresult.ErrSystemDriverMismatch
+	ErrGraphExecUpdateFailure     = cudaresult.ErrGraphExecUpdateFailure
 	ErrUnknown                    = cudaresult.ErrUnknown
 )

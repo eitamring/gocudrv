@@ -85,6 +85,7 @@ type Driver struct {
 	CuGraphLaunch        func(execGraph CUgraphExec, stream CUstream) CUresult
 	CuGraphDestroy       func(graph CUgraph) CUresult
 	CuGraphExecDestroy   func(execGraph CUgraphExec) CUresult
+	CuGraphExecUpdate    func(execGraph CUgraphExec, graph CUgraph, errNode *CUgraphNode, updateResult *int32) CUresult
 }
 
 // bindFn is the symbol-binding function used by Load. Overridable in tests.
@@ -178,6 +179,7 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuGraphLaunch, "cuGraphLaunch"},
 		{&d.CuGraphDestroy, "cuGraphDestroy"},
 		{&d.CuGraphExecDestroy, "cuGraphExecDestroy"},
+		{&d.CuGraphExecUpdate, "cuGraphExecUpdate"},
 		// device diagnostics (PCI bus id CUDA 4.1+, uuid CUDA 9.2+)
 		{&d.CuDeviceGetPCIBusId, "cuDeviceGetPCIBusId"},
 		{&d.CuDeviceGetUuid, "cuDeviceGetUuid"},
