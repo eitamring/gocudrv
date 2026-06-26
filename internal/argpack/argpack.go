@@ -44,6 +44,30 @@ func Add[T any](b *Builder, v T) {
 	b.count++
 }
 
+// AddBytes stores a copy of data and appends a pointer to it, for kernel
+// argument values whose type is not known at compile time. data must be
+// non-empty; the copy is owned by the Builder until KeepAlive returns.
+func AddBytes(b *Builder, data []byte) {
+	size := uintptr(len(data))
+	if b.count < inlineArgs && size <= unsafe.Sizeof(uint64(0)) {
+		slot := &b.inlineValues[b.count]
+		*slot = 0
+		copy(unsafe.Slice((*byte)(unsafe.Pointer(slot)), size), data)
+		b.inlinePointers[b.count] = unsafe.Pointer(slot)
+		b.count++
+		return
+	}
+
+	p := make([]byte, len(data))
+	copy(p, data)
+	b.spillValues = append(b.spillValues, p)
+	if b.spillPointers == nil {
+		b.spillPointers = append(b.spillPointers, b.inlinePointers[:b.count]...)
+	}
+	b.spillPointers = append(b.spillPointers, unsafe.Pointer(&p[0]))
+	b.count++
+}
+
 // Params returns the kernel parameter pointer array expected by cuLaunchKernel.
 // It returns nil when no parameters were added.
 func (b *Builder) Params() *unsafe.Pointer {

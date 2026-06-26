@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"sync"
+	"unsafe"
 
 	"github.com/eitamring/gocudrv/cudaresult"
 	"github.com/eitamring/gocudrv/cudasys"
@@ -122,6 +123,46 @@ func ArgValue[T Supported](v T) KernelArg {
 
 func (a valueKernelArg[T]) appendKernelArg(b *kernelArgBuilder) error {
 	argpack.Add(&b.packed, a.value)
+	return nil
+}
+
+// maxRawArgBytes bounds a single raw kernel argument; CUDA's parameter space is a few KiB.
+const maxRawArgBytes = 4096
+
+type devicePtrKernelArg struct {
+	ptr cudasys.CUdeviceptr
+}
+
+// ArgDevicePtr passes a raw device pointer to a kernel for a caller that holds
+// one directly. It takes no lock and tracks no buffer lifetime.
+func ArgDevicePtr(ptr cudasys.CUdeviceptr) KernelArg {
+	return devicePtrKernelArg{ptr: ptr}
+}
+
+func (a devicePtrKernelArg) appendKernelArg(b *kernelArgBuilder) error {
+	b.addDevicePtr(a.ptr)
+	return nil
+}
+
+type rawKernelArg struct {
+	value unsafe.Pointer
+	size  int
+}
+
+// ArgRaw passes size bytes at value as a kernel argument, for types Arg and
+// ArgValue do not cover. value must be non-nil and size in (0, 4096].
+func ArgRaw(value unsafe.Pointer, size int) KernelArg {
+	return rawKernelArg{value: value, size: size}
+}
+
+func (a rawKernelArg) appendKernelArg(b *kernelArgBuilder) error {
+	if a.value == nil {
+		return ErrNilKernelArg
+	}
+	if a.size <= 0 || a.size > maxRawArgBytes {
+		return ErrInvalidArgSize
+	}
+	argpack.AddBytes(&b.packed, unsafe.Slice((*byte)(a.value), a.size))
 	return nil
 }
 

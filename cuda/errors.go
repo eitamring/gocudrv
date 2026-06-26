@@ -30,6 +30,7 @@ var (
 	ErrEventTimingDisabled   = errors.New("cuda: event timing is disabled")
 	ErrInvalidLaunchConfig   = errors.New("cuda: invalid launch config")
 	ErrNilKernelArg          = errors.New("cuda: nil kernel argument")
+	ErrInvalidArgSize        = errors.New("cuda: invalid raw kernel argument size")
 	ErrContextMismatch       = errors.New("cuda: resource belongs to a different context")
 	ErrUnsupportedFillType   = errors.New("cuda: Fill is unsupported for 8-byte element types")
 	ErrInvalidBlockSize      = errors.New("cuda: block size must be positive")
