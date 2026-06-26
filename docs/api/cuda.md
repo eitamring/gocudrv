@@ -798,8 +798,31 @@ stream.Synchronize(ctx)
 - `(*GraphExec).Launch(ctx, stream) error` enqueues the executable on `stream`
   (`cuGraphLaunch`). It returns after the driver accepts the work, not after the
   GPU finishes; synchronize before reading outputs.
+- `(*GraphExec).Update(graph *Graph) error` re-applies a recaptured graph's node
+  parameters to the executable without re-instantiating (`cuGraphExecUpdate`),
+  which is cheap for repeated fixed-shape work. It returns
+  `ErrGraphExecUpdateFailure` when the topology changed too much to update in
+  place (re-instantiate then), and `ErrSymbolUnavailable` on a driver that lacks
+  the symbol.
 - `(*Graph).Close()` and `(*GraphExec).Close()` release the handles
   (`cuGraphDestroy`, `cuGraphExecDestroy`).
+
+For repeated work whose shape is fixed but whose parameters change, instantiate
+once and update in place each iteration:
+
+```go
+exec, _ := g.Instantiate()
+defer exec.Close()
+for step := 0; step < n; step++ {
+    g2, _ := recapture(stream) // capture the same shape with new parameters
+    if err := exec.Update(g2); err != nil {
+        exec.Close()
+        exec, _ = g2.Instantiate() // topology changed; re-instantiate
+    }
+    g2.Close()
+    exec.Launch(ctx, stream)
+}
+```
 
 **Lifetime rule:** both `Graph` and `GraphExec` are owned by the `Context` and
 must be closed before it. The buffers, module, and arguments referenced by the

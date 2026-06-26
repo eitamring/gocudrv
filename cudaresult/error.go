@@ -77,6 +77,7 @@ var (
 	ErrNotSupported               = &Error{Code: cudasys.CUDA_ERROR_NOT_SUPPORTED}
 	ErrSystemNotReady             = &Error{Code: cudasys.CUDA_ERROR_SYSTEM_NOT_READY}
 	ErrSystemDriverMismatch       = &Error{Code: cudasys.CUDA_ERROR_SYSTEM_DRIVER_MISMATCH}
+	ErrGraphExecUpdateFailure     = &Error{Code: cudasys.CUDA_ERROR_GRAPH_EXEC_UPDATE_FAILURE}
 	ErrUnknown                    = &Error{Code: cudasys.CUDA_ERROR_UNKNOWN}
 )
 

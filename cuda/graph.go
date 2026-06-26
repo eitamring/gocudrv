@@ -160,6 +160,34 @@ func (e *GraphExec) Launch(ctx context.Context, stream *Stream) error {
 	})
 }
 
+// Update re-applies graph's node parameters to this executable without
+// re-instantiating. It returns ErrGraphExecUpdateFailure if the topology changed
+// too much to update; re-instantiate then. graph must share the Context.
+func (e *GraphExec) Update(graph *Graph) error {
+	if e == nil {
+		return ErrNilGraphExec
+	}
+	if graph == nil {
+		return ErrNilGraph
+	}
+	e.opMu.RLock()
+	defer e.opMu.RUnlock()
+	if e.closed {
+		return ErrGraphExecClosed
+	}
+	graph.opMu.RLock()
+	defer graph.opMu.RUnlock()
+	if graph.closed {
+		return ErrGraphClosed
+	}
+	if graph.ctx != e.ctx {
+		return ErrContextMismatch
+	}
+	return e.ctx.doWait(context.Background(), func() error {
+		return cudaresult.GraphExecUpdate(e.ctx.driver, e.raw, graph.raw)
+	})
+}
+
 // Close releases the executable graph. Idempotent after a successful destroy.
 // Returns ErrContextClosed if the owning Context was closed first.
 func (e *GraphExec) Close() error {

@@ -110,6 +110,7 @@ type Driver struct {
     CuGraphLaunch        func(execGraph CUgraphExec, stream CUstream) CUresult
     CuGraphDestroy       func(graph CUgraph) CUresult
     CuGraphExecDestroy   func(execGraph CUgraphExec) CUresult
+    CuGraphExecUpdate    func(execGraph CUgraphExec, graph CUgraph, errNode *CUgraphNode, updateResult *int32) CUresult
 }
 ```
 
@@ -189,6 +190,7 @@ driver lacks the symbol):
 | `cuGraphLaunch` | `CuGraphLaunch` | graph | CUDA 11.x |
 | `cuGraphDestroy` | `CuGraphDestroy` | graph | CUDA 11.x |
 | `cuGraphExecDestroy` | `CuGraphExecDestroy` | graph | CUDA 11.x |
+| `cuGraphExecUpdate` | `CuGraphExecUpdate` | graph | CUDA 10.2 |
 | `cuDeviceGetPCIBusId` | `CuDeviceGetPCIBusId` | device diagnostics | CUDA 4.1 |
 | `cuDeviceGetUuid` | `CuDeviceGetUuid` | device diagnostics | CUDA 9.2 |
 | `cuMemHostRegister_v2` | `CuMemHostRegister` | host registration | CUDA 6.5 |

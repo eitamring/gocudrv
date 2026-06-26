@@ -111,3 +111,24 @@ func TestGraphLaunchAndDestroy(t *testing.T) {
 		t.Errorf("exec destroy nil func = %v, want ErrSymbolUnavailable", err)
 	}
 }
+
+func TestGraphExecUpdate(t *testing.T) {
+	if err := GraphExecUpdate(nil, 0x7E7E, 0x6A6A); !errors.Is(err, ErrNotInitialized) {
+		t.Errorf("nil driver = %v, want ErrNotInitialized", err)
+	}
+	if err := GraphExecUpdate(&cudasys.Driver{}, 0x7E7E, 0x6A6A); !errors.Is(err, ErrSymbolUnavailable) {
+		t.Errorf("nil func = %v, want ErrSymbolUnavailable", err)
+	}
+	ok := &cudasys.Driver{CuGraphExecUpdate: func(cudasys.CUgraphExec, cudasys.CUgraph, *cudasys.CUgraphNode, *int32) cudasys.CUresult {
+		return cudasys.CUDA_SUCCESS
+	}}
+	if err := GraphExecUpdate(ok, 0x7E7E, 0x6A6A); err != nil {
+		t.Errorf("update = %v, want nil", err)
+	}
+	fail := &cudasys.Driver{CuGraphExecUpdate: func(cudasys.CUgraphExec, cudasys.CUgraph, *cudasys.CUgraphNode, *int32) cudasys.CUresult {
+		return cudasys.CUDA_ERROR_GRAPH_EXEC_UPDATE_FAILURE
+	}}
+	if err := GraphExecUpdate(fail, 0x7E7E, 0x6A6A); !errors.Is(err, ErrGraphExecUpdateFailure) {
+		t.Errorf("update failure = %v, want ErrGraphExecUpdateFailure", err)
+	}
+}
