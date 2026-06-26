@@ -3,10 +3,10 @@ package cuda
 import (
 	"context"
 	"math"
+	"runtime"
 	"sync"
 	"unsafe"
 
-	"github.com/eitamring/gocudrv/cudaresult"
 	"github.com/eitamring/gocudrv/cudasys"
 	"github.com/eitamring/gocudrv/internal/argpack"
 )
@@ -55,14 +55,18 @@ type KernelArg interface {
 
 type kernelArgBuilder struct {
 	ctx           *Context
-	packed        argpack.Builder
+	packed        *argpack.Builder
 	inlineLocks   [16]*sync.RWMutex
 	lockCount     int
 	overflowLocks []*sync.RWMutex
+	// snapshot packs a buffer's device pointer without retaining its lock, for
+	// PackedArgs where the args outlive a single launch and the caller owns
+	// buffer lifetime.
+	snapshot bool
 }
 
 func (b *kernelArgBuilder) addDevicePtr(ptr cudasys.CUdeviceptr) {
-	argpack.Add(&b.packed, ptr)
+	argpack.Add(b.packed, ptr)
 }
 
 func (b *kernelArgBuilder) addLock(mu *sync.RWMutex) {
@@ -103,12 +107,17 @@ func (a bufferKernelArg[T]) appendKernelArg(b *kernelArgBuilder) error {
 		a.buffer.opMu.RUnlock()
 		return ErrBufferClosed
 	}
-	if a.buffer.ctx != b.ctx {
+	if b.ctx != nil && a.buffer.ctx != b.ctx {
 		a.buffer.opMu.RUnlock()
 		return ErrContextMismatch
 	}
-	b.addLock(&a.buffer.opMu)
-	b.addDevicePtr(a.buffer.ptr)
+	ptr := a.buffer.ptr
+	if b.snapshot {
+		a.buffer.opMu.RUnlock()
+	} else {
+		b.addLock(&a.buffer.opMu)
+	}
+	b.addDevicePtr(ptr)
 	return nil
 }
 
@@ -122,7 +131,7 @@ func ArgValue[T Supported](v T) KernelArg {
 }
 
 func (a valueKernelArg[T]) appendKernelArg(b *kernelArgBuilder) error {
-	argpack.Add(&b.packed, a.value)
+	argpack.Add(b.packed, a.value)
 	return nil
 }
 
@@ -162,7 +171,7 @@ func (a rawKernelArg) appendKernelArg(b *kernelArgBuilder) error {
 	if a.size <= 0 || a.size > maxRawArgBytes {
 		return ErrInvalidArgSize
 	}
-	argpack.AddBytes(&b.packed, unsafe.Slice((*byte)(a.value), a.size))
+	argpack.AddBytes(b.packed, unsafe.Slice((*byte)(a.value), a.size))
 	return nil
 }
 
@@ -214,7 +223,8 @@ func (f *Function) launch(ctx context.Context, rawStream cudasys.CUstream, strea
 		return ErrModuleClosed
 	}
 
-	builder := kernelArgBuilder{ctx: f.module.ctx}
+	var pk argpack.Builder
+	builder := kernelArgBuilder{ctx: f.module.ctx, packed: &pk}
 	defer builder.release()
 	for _, arg := range args {
 		if arg == nil {
@@ -225,18 +235,95 @@ func (f *Function) launch(ctx context.Context, rawStream cudasys.CUstream, strea
 		}
 	}
 
-	err := f.module.ctx.doWait(ctx, func() error {
-		return cudaresult.LaunchKernel(
-			f.module.ctx.driver,
-			f.raw,
-			cfg.GridX, cfg.GridY, cfg.GridZ,
-			cfg.BlockX, cfg.BlockY, cfg.BlockZ,
-			cfg.SharedMemBytes,
-			rawStream,
-			builder.packed.Params(),
-		)
-	})
-	builder.packed.KeepAlive()
+	err := f.module.ctx.launchKernel(ctx, f.raw, cfg, rawStream, pk.Params())
+	pk.KeepAlive()
+	return err
+}
+
+// PackedArgs is a kernel argument list packed once for repeated low-overhead
+// launches. It captures device pointers and scalar values at pack time and
+// takes no per-launch locks, so unlike Launch the caller must keep every
+// referenced Buffer open and unchanged for as long as the PackedArgs is used.
+// Build one with Pack and launch it with Function.LaunchPacked. Do not copy a
+// PackedArgs; pass the pointer Pack returns.
+type PackedArgs struct {
+	packed argpack.Builder
+}
+
+// Pack packs args into a reusable PackedArgs. It accepts the same arguments as
+// Launch, but resolves each buffer to a raw device pointer immediately rather
+// than holding its lock, so the caller owns lifetime from here on. Pack does no
+// context check; the buffers must belong to the Context the kernel is launched
+// on.
+func Pack(args ...KernelArg) (*PackedArgs, error) {
+	p := &PackedArgs{}
+	b := kernelArgBuilder{packed: &p.packed, snapshot: true}
+	for _, arg := range args {
+		if arg == nil {
+			return nil, ErrNilKernelArg
+		}
+		if err := arg.appendKernelArg(&b); err != nil {
+			return nil, err
+		}
+	}
+	return p, nil
+}
+
+// Len returns the number of packed arguments. It is 0 for a nil receiver.
+func (p *PackedArgs) Len() int {
+	if p == nil {
+		return 0
+	}
+	return p.packed.Len()
+}
+
+// LaunchPacked launches f on the context's legacy default stream with
+// pre-packed arguments and no per-launch argument allocation. The lifetime
+// rules of PackedArgs apply: keep the referenced buffers open until the launch
+// has been synchronized.
+func (f *Function) LaunchPacked(ctx context.Context, cfg LaunchConfig, p *PackedArgs) error {
+	return f.launchPacked(ctx, defaultStream, nil, cfg, p)
+}
+
+// LaunchPackedOn is LaunchPacked on a specific stream of the same Context.
+func (f *Function) LaunchPackedOn(ctx context.Context, stream *Stream, cfg LaunchConfig, p *PackedArgs) error {
+	if f == nil {
+		return ErrNilFunction
+	}
+	if stream == nil {
+		return ErrNilStream
+	}
+	stream.opMu.RLock()
+	defer stream.opMu.RUnlock()
+	if stream.closed {
+		return ErrStreamClosed
+	}
+	return f.launchPacked(ctx, stream.raw, stream.ctx, cfg, p)
+}
+
+func (f *Function) launchPacked(ctx context.Context, rawStream cudasys.CUstream, streamCtx *Context, cfg LaunchConfig, p *PackedArgs) error {
+	if f == nil {
+		return ErrNilFunction
+	}
+	if p == nil {
+		return ErrNilKernelArg
+	}
+	if !cfg.valid() {
+		return ErrInvalidLaunchConfig
+	}
+	if f.module == nil {
+		return ErrNilModule
+	}
+	if streamCtx != nil && streamCtx != f.module.ctx {
+		return ErrContextMismatch
+	}
+	f.module.opMu.RLock()
+	defer f.module.opMu.RUnlock()
+	if f.module.closed {
+		return ErrModuleClosed
+	}
+	err := f.module.ctx.launchKernel(ctx, f.raw, cfg, rawStream, p.packed.Params())
+	runtime.KeepAlive(p)
 	return err
 }
 

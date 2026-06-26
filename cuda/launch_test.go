@@ -623,3 +623,115 @@ func TestLaunchModuleCloseRace(t *testing.T) {
 	_ = mod.Close()
 	wg.Wait()
 }
+
+func TestLaunchPacked(t *testing.T) {
+	var l launchFake
+	installDriver(t, l.driver(t))
+	dev, _ := GetDevice(0)
+	ctx, _ := dev.Primary()
+	t.Cleanup(func() { _ = ctx.Close() })
+	mod, _ := ctx.LoadModule([]byte{'P', 0})
+	t.Cleanup(func() { _ = mod.Close() })
+	fn, _ := mod.Function("k")
+	buf, _ := Alloc[float32](ctx, 4)
+	t.Cleanup(func() { _ = buf.Close() })
+
+	p, err := Pack(
+		Arg(buf),
+		ArgValue(int32(-3)),
+		ArgValue(uint32(7)),
+		ArgValue(float32(1.5)),
+		ArgValue(float64(2.5)),
+	)
+	if err != nil {
+		t.Fatalf("Pack: %v", err)
+	}
+	if p.Len() != 5 {
+		t.Fatalf("Len = %d, want 5", p.Len())
+	}
+
+	cfg := LaunchConfig1D(1024, 256)
+	cfg.SharedMemBytes = 32
+	for i := 0; i < 3; i++ { // the packed args are reused across launches
+		if err := fn.LaunchPacked(context.Background(), cfg, p); err != nil {
+			t.Fatalf("LaunchPacked: %v", err)
+		}
+	}
+	if l.launchCalls.Load() != 3 {
+		t.Fatalf("launch calls = %d, want 3", l.launchCalls.Load())
+	}
+	if got := *(*cudasys.CUdeviceptr)(l.params[0]); got != 0xDEAD {
+		t.Errorf("arg0 = %#x, want 0xDEAD", got)
+	}
+	if got := *(*int32)(l.params[1]); got != -3 {
+		t.Errorf("arg1 = %d, want -3", got)
+	}
+	if got := *(*float64)(l.params[4]); got != 2.5 {
+		t.Errorf("arg4 = %v, want 2.5", got)
+	}
+}
+
+func TestPackRejects(t *testing.T) {
+	ctx, _, _, buf := newLaunchFixture(t)
+	_ = ctx
+	if _, err := Pack(Arg(buf), nil); !errors.Is(err, ErrNilKernelArg) {
+		t.Errorf("nil arg = %v, want ErrNilKernelArg", err)
+	}
+	_ = buf.Close()
+	if _, err := Pack(Arg(buf)); !errors.Is(err, ErrBufferClosed) {
+		t.Errorf("closed buffer = %v, want ErrBufferClosed", err)
+	}
+}
+
+func TestLaunchPackedRejects(t *testing.T) {
+	ctx, _, fn, buf := newLaunchFixture(t)
+	_ = ctx
+	p, err := Pack(Arg(buf))
+	if err != nil {
+		t.Fatalf("Pack: %v", err)
+	}
+	if err := fn.LaunchPacked(context.Background(), LaunchConfig{}, p); !errors.Is(err, ErrInvalidLaunchConfig) {
+		t.Errorf("invalid cfg = %v, want ErrInvalidLaunchConfig", err)
+	}
+	if err := fn.LaunchPacked(context.Background(), LaunchConfig1D(256, 256), nil); !errors.Is(err, ErrNilKernelArg) {
+		t.Errorf("nil packed = %v, want ErrNilKernelArg", err)
+	}
+	var nilFn *Function
+	if err := nilFn.LaunchPacked(context.Background(), LaunchConfig1D(256, 256), p); !errors.Is(err, ErrNilFunction) {
+		t.Errorf("nil function = %v, want ErrNilFunction", err)
+	}
+}
+
+func BenchmarkLaunchPacked(b *testing.B) {
+	var l launchFake
+	drv := l.driver(b)
+	// Override with a launch that captures nothing, so the benchmark measures
+	// the gocudrv launch path rather than the fake's per-call param copy.
+	drv.CuLaunchKernel = func(cudasys.CUfunction, uint32, uint32, uint32, uint32, uint32, uint32, uint32, cudasys.CUstream, *unsafe.Pointer, *unsafe.Pointer) cudasys.CUresult {
+		return cudasys.CUDA_SUCCESS
+	}
+	resetDriver()
+	mu.Lock()
+	driver = drv
+	mu.Unlock()
+	b.Cleanup(resetDriver)
+	dev, _ := GetDevice(0)
+	ctx, _ := dev.Primary()
+	b.Cleanup(func() { _ = ctx.Close() })
+	mod, _ := ctx.LoadModule([]byte{'P', 0})
+	b.Cleanup(func() { _ = mod.Close() })
+	fn, _ := mod.Function("k")
+	buf, _ := Alloc[float32](ctx, 4)
+	b.Cleanup(func() { _ = buf.Close() })
+	cfg := LaunchConfig1D(1024, 256)
+	cfg.SharedMemBytes = 32
+	p, _ := Pack(Arg(buf), ArgValue(int32(1)), ArgValue(uint32(2)), ArgValue(float32(3)))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := fn.LaunchPacked(context.Background(), cfg, p); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
