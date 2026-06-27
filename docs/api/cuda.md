@@ -718,6 +718,36 @@ mid-launch, and `ArgValue` is type-checked. `ArgDevicePtr` and `ArgRaw` are
 escape hatches with neither guarantee, for raw handles from other CUDA code or
 argument types the scalars cannot express; the caller owns correctness.
 
+### packed launches
+
+`Launch` and `LaunchOn` build their argument array on every call, which boxes
+each argument. For a tight loop that launches the same kernel repeatedly, pack
+the arguments once and reuse them:
+
+```go
+p, err := cuda.Pack(cuda.Arg(in), cuda.Arg(out), cuda.ArgValue(int32(n)))
+if err != nil {
+    return err
+}
+for step := 0; step < steps; step++ {
+    if err := fn.LaunchPacked(context.Background(), cfg, p); err != nil {
+        return err
+    }
+}
+```
+
+- `Pack(args...) (*PackedArgs, error)` packs the same arguments `Launch` accepts
+  into a reusable list. It resolves each buffer to a raw device pointer at pack
+  time rather than holding the buffer's lock, so from then on the caller owns
+  lifetime, like `ArgDevicePtr`.
+- `(*Function).LaunchPacked(ctx, cfg, p)` and `LaunchPackedOn(ctx, stream, cfg, p)`
+  launch with a pre-packed list and allocate nothing per launch.
+
+**Lifetime rule:** a `PackedArgs` captures device pointers, so keep every
+referenced `Buffer` open and unchanged for as long as you launch it, and do not
+copy a `PackedArgs` value (pass the pointer `Pack` returns). For one-off
+launches, `Launch` is simpler and safer.
+
 ## occupancy
 
 Occupancy is how many of a multiprocessor's warp slots a kernel can fill. These

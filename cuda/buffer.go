@@ -218,10 +218,7 @@ func (b *Buffer[T]) CopyFrom(ctx context.Context, src []T) error {
 		return ErrLengthMismatch
 	}
 	srcPtr := (*byte)(unsafe.Pointer(&src[0]))
-	bytes := b.bytes
-	err := b.ctx.doWait(ctx, func() error {
-		return cudaresult.MemcpyHtoD(b.ctx.driver, b.ptr, srcPtr, bytes)
-	})
+	err := b.ctx.memcpyHtoD(ctx, b.ptr, srcPtr, b.bytes)
 	runtime.KeepAlive(src)
 	return err
 }
@@ -241,10 +238,7 @@ func (b *Buffer[T]) CopyTo(ctx context.Context, dst []T) error {
 		return ErrLengthMismatch
 	}
 	dstPtr := (*byte)(unsafe.Pointer(&dst[0]))
-	bytes := b.bytes
-	err := b.ctx.doWait(ctx, func() error {
-		return cudaresult.MemcpyDtoH(b.ctx.driver, dstPtr, b.ptr, bytes)
-	})
+	err := b.ctx.memcpyDtoH(ctx, dstPtr, b.ptr, b.bytes)
 	runtime.KeepAlive(dst)
 	return err
 }
@@ -271,10 +265,7 @@ func (b *Buffer[T]) CopyFromHost(ctx context.Context, src *HostBuffer[T]) error 
 	if src.length != b.length {
 		return ErrLengthMismatch
 	}
-	bytes := b.bytes
-	return b.ctx.doWait(ctx, func() error {
-		return cudaresult.MemcpyHtoD(b.ctx.driver, b.ptr, src.ptr, bytes)
-	})
+	return b.ctx.memcpyHtoD(ctx, b.ptr, src.ptr, b.bytes)
 }
 
 // CopyToHost copies b.Len() elements from the device buffer into a pinned
@@ -298,10 +289,7 @@ func (b *Buffer[T]) CopyToHost(ctx context.Context, dst *HostBuffer[T]) error {
 	if dst.length != b.length {
 		return ErrLengthMismatch
 	}
-	bytes := b.bytes
-	return b.ctx.doWait(ctx, func() error {
-		return cudaresult.MemcpyDtoH(b.ctx.driver, dst.ptr, b.ptr, bytes)
-	})
+	return b.ctx.memcpyDtoH(ctx, dst.ptr, b.ptr, b.bytes)
 }
 
 // CopyFromHostAsync enqueues a copy from a pinned HostBuffer into the device
@@ -336,10 +324,7 @@ func (b *Buffer[T]) CopyFromHostAsync(ctx context.Context, stream *Stream, src *
 	if src.length != b.length {
 		return ErrLengthMismatch
 	}
-	bytes := b.bytes
-	return b.ctx.doWait(ctx, func() error {
-		return cudaresult.MemcpyHtoDAsync(b.ctx.driver, b.ptr, src.ptr, bytes, stream.raw)
-	})
+	return b.ctx.memcpyHtoDAsync(ctx, b.ptr, src.ptr, b.bytes, stream.raw)
 }
 
 // CopyToHostAsync enqueues a copy from the device buffer into a pinned
@@ -374,10 +359,7 @@ func (b *Buffer[T]) CopyToHostAsync(ctx context.Context, stream *Stream, dst *Ho
 	if dst.length != b.length {
 		return ErrLengthMismatch
 	}
-	bytes := b.bytes
-	return b.ctx.doWait(ctx, func() error {
-		return cudaresult.MemcpyDtoHAsync(b.ctx.driver, dst.ptr, b.ptr, bytes, stream.raw)
-	})
+	return b.ctx.memcpyDtoHAsync(ctx, dst.ptr, b.ptr, b.bytes, stream.raw)
 }
 
 // Zero sets every byte of the buffer to zero. Blocks until the memset
@@ -391,10 +373,7 @@ func (b *Buffer[T]) Zero(ctx context.Context) error {
 	if b.closed {
 		return ErrBufferClosed
 	}
-	bytes := b.bytes
-	return b.ctx.doWait(ctx, func() error {
-		return cudaresult.MemsetD8(b.ctx.driver, b.ptr, 0, bytes)
-	})
+	return b.ctx.memset(ctx, b.ptr, 0, b.bytes, 1)
 }
 
 // ZeroAsync enqueues a memset that clears the buffer on stream. It returns
@@ -420,10 +399,7 @@ func (b *Buffer[T]) ZeroAsync(ctx context.Context, stream *Stream) error {
 	if stream.ctx != b.ctx {
 		return ErrContextMismatch
 	}
-	bytes := b.bytes
-	return b.ctx.doWait(ctx, func() error {
-		return cudaresult.MemsetD8Async(b.ctx.driver, b.ptr, 0, bytes, stream.raw)
-	})
+	return b.ctx.memsetAsync(ctx, b.ptr, 0, b.bytes, 1, stream.raw)
 }
 
 // Fill sets every element of the buffer to v using the device memset
@@ -445,19 +421,7 @@ func (b *Buffer[T]) Fill(ctx context.Context, v T) error {
 	if b.closed {
 		return ErrBufferClosed
 	}
-	count := uint64(b.length)
-	size := unsafe.Sizeof(v)
-	val := fillBits(v)
-	return b.ctx.doWait(ctx, func() error {
-		switch size {
-		case 1:
-			return cudaresult.MemsetD8(b.ctx.driver, b.ptr, uint8(val), count)
-		case 2:
-			return cudaresult.MemsetD16(b.ctx.driver, b.ptr, uint16(val), count)
-		default:
-			return cudaresult.MemsetD32(b.ctx.driver, b.ptr, val, count)
-		}
-	})
+	return b.ctx.memset(ctx, b.ptr, fillBits(v), uint64(b.length), unsafe.Sizeof(v))
 }
 
 // fillBits returns the bytes of v widened to a uint32, the value the memset
@@ -502,19 +466,7 @@ func (b *Buffer[T]) FillAsync(ctx context.Context, stream *Stream, v T) error {
 	if stream.ctx != b.ctx {
 		return ErrContextMismatch
 	}
-	count := uint64(b.length)
-	size := unsafe.Sizeof(v)
-	val := fillBits(v)
-	return b.ctx.doWait(ctx, func() error {
-		switch size {
-		case 1:
-			return cudaresult.MemsetD8Async(b.ctx.driver, b.ptr, uint8(val), count, stream.raw)
-		case 2:
-			return cudaresult.MemsetD16Async(b.ctx.driver, b.ptr, uint16(val), count, stream.raw)
-		default:
-			return cudaresult.MemsetD32Async(b.ctx.driver, b.ptr, val, count, stream.raw)
-		}
-	})
+	return b.ctx.memsetAsync(ctx, b.ptr, fillBits(v), uint64(b.length), unsafe.Sizeof(v), stream.raw)
 }
 
 // CopyToDevice copies b.Len() elements from this buffer into another device
@@ -542,10 +494,7 @@ func (b *Buffer[T]) CopyToDevice(ctx context.Context, dst *Buffer[T]) error {
 	if dst.length != b.length {
 		return ErrLengthMismatch
 	}
-	bytes := b.bytes
-	return b.ctx.doWait(ctx, func() error {
-		return cudaresult.MemcpyDtoD(b.ctx.driver, dst.ptr, b.ptr, bytes)
-	})
+	return b.ctx.memcpyDtoD(ctx, dst.ptr, b.ptr, b.bytes)
 }
 
 // CopyToDeviceAsync enqueues a device-to-device copy from this buffer into dst
@@ -582,10 +531,7 @@ func (b *Buffer[T]) CopyToDeviceAsync(ctx context.Context, stream *Stream, dst *
 	if dst.length != b.length {
 		return ErrLengthMismatch
 	}
-	bytes := b.bytes
-	return b.ctx.doWait(ctx, func() error {
-		return cudaresult.MemcpyDtoDAsync(b.ctx.driver, dst.ptr, b.ptr, bytes, stream.raw)
-	})
+	return b.ctx.memcpyDtoDAsync(ctx, dst.ptr, b.ptr, b.bytes, stream.raw)
 }
 
 // CopyHtoD is a thin wrapper around (*Buffer[T]).CopyFrom kept for the

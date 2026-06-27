@@ -275,6 +275,18 @@ double free; a failed free leaves the buffer open for retry.
 Panics inside `fn` are recovered and surfaced as `*executor.PanicError`;
 the executor stays alive so the caller can keep using it or close it.
 
+### allocation-free hot paths
+
+Every call crosses the executor, so its fixed per-call cost matters. The
+completion channel is recycled through a `sync.Pool`, and the executor accepts a
+`Job` (a `Run() error` method) as well as a plain `func`. The hot copy, memset,
+and launch paths submit a pooled `Job` value (`memOp`, `launchOp`,
+`graphLaunchOp`) instead of a closure: a pooled pointer passed as an interface
+does not allocate, where a per-call closure would. The result is that a steady
+copy or `LaunchPacked` loop allocates nothing per call. Cold paths (module load,
+context setup, allocation) still use the plain `func` form for clarity, wrapped
+internally as a `Job`.
+
 ## host pointers in copy paths
 
 `cudasys` declares host-buffer pointers as `*byte`. The `cuda` layer holds a

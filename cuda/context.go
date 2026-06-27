@@ -137,6 +137,24 @@ func (c *Context) doWait(ctx context.Context, fn func() error) error {
 	return c.doWith(ctx, fn, true)
 }
 
+// doJob runs a pooled Job on the executor with the same wait semantics as
+// doWait, but without allocating a closure per call. Used by the hot copy,
+// memset, and launch paths.
+func (c *Context) doJob(ctx context.Context, j executor.Job) error {
+	if c == nil || c.exec == nil {
+		return ErrNilContext
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.opMu.RLock()
+	defer c.opMu.RUnlock()
+	if c.closed.Load() {
+		return ErrContextClosed
+	}
+	return c.exec.DoJob(ctx, j)
+}
+
 func (c *Context) doWith(ctx context.Context, fn func() error, waitAfterSubmit bool) error {
 	if c == nil || c.exec == nil {
 		return ErrNilContext
