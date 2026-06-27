@@ -202,6 +202,13 @@ driver lacks the symbol):
 | `cuMemPoolGetAttribute` | `CuMemPoolGetAttribute` | memory pools | CUDA 11.2 |
 | `cuMemPoolSetAttribute` | `CuMemPoolSetAttribute` | memory pools | CUDA 11.2 |
 | `cuMemAllocFromPoolAsync` | `CuMemAllocFromPoolAsync` | memory pools | CUDA 11.2 |
+| `cuFuncSetAttribute` | `CuFuncSetAttribute` | kernel attributes | CUDA 6.5 |
+| `cuFuncGetAttribute` | `CuFuncGetAttribute` | kernel attributes | CUDA 2.2 |
+| `cuPointerGetAttribute` | `CuPointerGetAttribute` | pointer attributes | CUDA 4.0 |
+| `cuDeviceCanAccessPeer` | `CuDeviceCanAccessPeer` | peer access | CUDA 4.0 |
+| `cuCtxEnablePeerAccess` | `CuCtxEnablePeerAccess` | peer access | CUDA 4.0 |
+| `cuCtxDisablePeerAccess` | `CuCtxDisablePeerAccess` | peer access | CUDA 4.0 |
+| `cuMemcpyPeer` | `CuMemcpyPeer` | peer access | CUDA 4.0 |
 
 ### minimum practical driver version
 
