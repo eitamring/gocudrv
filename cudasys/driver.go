@@ -87,6 +87,10 @@ type Driver struct {
 	CuGraphExecDestroy   func(execGraph CUgraphExec) CUresult
 	CuGraphExecUpdate    func(execGraph CUgraphExec, graph CUgraph, errNode *CUgraphNode, updateResult *int32) CUresult
 
+	CuMemAllocManaged  func(pp **byte, bytesize uint64, flags uint32) CUresult
+	CuMemPrefetchAsync func(devPtr CUdeviceptr, count uint64, dstDevice CUdevice, stream CUstream) CUresult
+	CuMemAdvise        func(devPtr CUdeviceptr, count uint64, advice int32, device CUdevice) CUresult
+
 	CuFuncSetAttribute     func(fn CUfunction, attrib int32, value int32) CUresult
 	CuFuncGetAttribute     func(value *int32, attrib int32, fn CUfunction) CUresult
 	CuPointerGetAttribute  func(data unsafe.Pointer, attribute int32, ptr CUdeviceptr) CUresult
@@ -203,6 +207,10 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuMemPoolGetAttribute, "cuMemPoolGetAttribute"},
 		{&d.CuMemPoolSetAttribute, "cuMemPoolSetAttribute"},
 		{&d.CuMemAllocFromPoolAsync, "cuMemAllocFromPoolAsync"},
+		// unified (managed) memory (CUDA 6.0+ / 8.0+)
+		{&d.CuMemAllocManaged, "cuMemAllocManaged"},
+		{&d.CuMemPrefetchAsync, "cuMemPrefetchAsync"},
+		{&d.CuMemAdvise, "cuMemAdvise"},
 		// kernel and pointer attributes (CUDA 6.5+ / 4.0+)
 		{&d.CuFuncSetAttribute, "cuFuncSetAttribute"},
 		{&d.CuFuncGetAttribute, "cuFuncGetAttribute"},

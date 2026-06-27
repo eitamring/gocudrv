@@ -209,6 +209,9 @@ driver lacks the symbol):
 | `cuCtxEnablePeerAccess` | `CuCtxEnablePeerAccess` | peer access | CUDA 4.0 |
 | `cuCtxDisablePeerAccess` | `CuCtxDisablePeerAccess` | peer access | CUDA 4.0 |
 | `cuMemcpyPeer` | `CuMemcpyPeer` | peer access | CUDA 4.0 |
+| `cuMemAllocManaged` | `CuMemAllocManaged` | managed memory | CUDA 6.0 |
+| `cuMemPrefetchAsync` | `CuMemPrefetchAsync` | managed memory | CUDA 8.0 |
+| `cuMemAdvise` | `CuMemAdvise` | managed memory | CUDA 8.0 |
 
 ### minimum practical driver version
 
