@@ -491,6 +491,36 @@ result := mb.Slice()                        // CPU reads back, no explicit copy
 - `(*ManagedBuffer[T]).Close()` frees the allocation (`cuMemFree`); close it
   before the Context.
 
+## virtual memory (VMM)
+
+`VirtualBuffer` is device memory built from the low-level virtual memory
+management API: a reserved virtual address range with a physical allocation
+mapped into it and device access granted. `AllocVirtual` wraps the whole
+reserve, create, map, and set-access lifecycle (rolling back on any failure), so
+the result behaves like a `Buffer` for launches and host copies. It is the
+building block for custom growable allocators. The VMM symbols need a CUDA 10.2+
+driver, so the entry points return `ErrSymbolUnavailable` on an older one.
+
+```go
+vb, err := cuda.AllocVirtual[float32](ctx, n)
+if err != nil { return err }
+defer vb.Close()
+vb.CopyFrom(context.Background(), input)
+fn.Launch(context.Background(), cfg, cuda.ArgDevicePtr(vb.DevicePtr()))
+```
+
+- `func AllocVirtual[T Supported](ctx *Context, n int) (*VirtualBuffer[T], error)`
+  reserves and maps `n` elements, rounding the reservation up to the device's
+  recommended granularity.
+- `(*VirtualBuffer[T]).DevicePtr()` is the device pointer for kernel arguments;
+  `Len`/`Bytes` report the requested size.
+- `(*VirtualBuffer[T]).CopyFrom(ctx, src)` / `CopyTo(ctx, dst)` copy host to and
+  from the buffer; lengths must match `Len()`.
+- `(*VirtualBuffer[T]).Close()` tears the allocation down (unmap, release the
+  handle, free the address reservation). It tears down only what is still live
+  and is retryable: a partial failure returns an error and can be retried, and
+  the address is freed only after the unmap succeeds.
+
 ## streams
 
 `Stream` is an ordered queue of GPU work owned by a `Context`. New streams are
