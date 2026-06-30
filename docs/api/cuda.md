@@ -457,6 +457,40 @@ every entry point here returns `ErrSymbolUnavailable` on an older one.
   memory is ready once the stream reaches this point; free it with `FreeAsync` or
   `Close`. The stream must belong to the pool's context.
 
+## managed (unified) memory
+
+`ManagedBuffer` is unified memory addressable from both host and device: the
+driver migrates pages on demand, so no explicit copy is needed. Write the host
+`Slice`, launch a kernel against `DevicePtr`, and read the `Slice` back. It needs
+a CUDA 6.0+ driver (prefetch and advise need 8.0+), so the entry points return
+`ErrSymbolUnavailable` on older ones.
+
+```go
+mb, err := cuda.AllocManaged[float32](ctx, n)
+if err != nil { return err }
+defer mb.Close()
+copy(mb.Slice(), input)                    // CPU writes directly
+mb.PrefetchToDevice(context.Background(), stream)
+fn.Launch(context.Background(), cfg, cuda.ArgDevicePtr(mb.DevicePtr()))
+stream.Synchronize(context.Background())
+result := mb.Slice()                        // CPU reads back, no explicit copy
+```
+
+- `func AllocManaged[T Supported](ctx *Context, n int) (*ManagedBuffer[T], error)`
+  allocates `n` elements of unified memory (`cuMemAllocManaged`).
+- `(*ManagedBuffer[T]).Slice() []T` returns a host-usable slice over the
+  allocation; the CPU reads and writes it directly. Valid only while the buffer
+  is open.
+- `(*ManagedBuffer[T]).DevicePtr()` is the device pointer for kernel arguments
+  (pass it with `ArgDevicePtr`); `Len`/`Bytes` report size.
+- `(*ManagedBuffer[T]).PrefetchToDevice(ctx, stream)` / `PrefetchToHost(ctx, stream)`
+  migrate the pages ahead of use (`cuMemPrefetchAsync`) so the first access does
+  not page-fault.
+- `(*ManagedBuffer[T]).Advise(advice MemAdvice)` applies a migration hint
+  (`cuMemAdvise`), for example `AdviseSetReadMostly` or `AdviseSetPreferredLocation`.
+- `(*ManagedBuffer[T]).Close()` frees the allocation (`cuMemFree`); close it
+  before the Context.
+
 ## streams
 
 `Stream` is an ordered queue of GPU work owned by a `Context`. New streams are
