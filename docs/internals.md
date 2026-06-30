@@ -212,6 +212,14 @@ driver lacks the symbol):
 | `cuMemAllocManaged` | `CuMemAllocManaged` | managed memory | CUDA 6.0 |
 | `cuMemPrefetchAsync` | `CuMemPrefetchAsync` | managed memory | CUDA 8.0 |
 | `cuMemAdvise` | `CuMemAdvise` | managed memory | CUDA 8.0 |
+| `cuMemGetAllocationGranularity` | `CuMemGetAllocationGranularity` | virtual memory | CUDA 10.2 |
+| `cuMemCreate` | `CuMemCreate` | virtual memory | CUDA 10.2 |
+| `cuMemAddressReserve` | `CuMemAddressReserve` | virtual memory | CUDA 10.2 |
+| `cuMemMap` | `CuMemMap` | virtual memory | CUDA 10.2 |
+| `cuMemSetAccess` | `CuMemSetAccess` | virtual memory | CUDA 10.2 |
+| `cuMemUnmap` | `CuMemUnmap` | virtual memory | CUDA 10.2 |
+| `cuMemAddressFree` | `CuMemAddressFree` | virtual memory | CUDA 10.2 |
+| `cuMemRelease` | `CuMemRelease` | virtual memory | CUDA 10.2 |
 
 ### minimum practical driver version
 

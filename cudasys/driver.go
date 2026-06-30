@@ -91,6 +91,15 @@ type Driver struct {
 	CuMemPrefetchAsync func(devPtr CUdeviceptr, count uint64, dstDevice CUdevice, stream CUstream) CUresult
 	CuMemAdvise        func(devPtr CUdeviceptr, count uint64, advice int32, device CUdevice) CUresult
 
+	CuMemGetAllocationGranularity func(granularity *uint64, prop *CUmemAllocationProp, option uint32) CUresult
+	CuMemCreate                   func(handle *CUmemGenericAllocationHandle, size uint64, prop *CUmemAllocationProp, flags uint64) CUresult
+	CuMemAddressReserve           func(ptr *CUdeviceptr, size uint64, alignment uint64, addr CUdeviceptr, flags uint64) CUresult
+	CuMemMap                      func(ptr CUdeviceptr, size uint64, offset uint64, handle CUmemGenericAllocationHandle, flags uint64) CUresult
+	CuMemSetAccess                func(ptr CUdeviceptr, size uint64, desc *CUmemAccessDesc, count uint64) CUresult
+	CuMemUnmap                    func(ptr CUdeviceptr, size uint64) CUresult
+	CuMemAddressFree              func(ptr CUdeviceptr, size uint64) CUresult
+	CuMemRelease                  func(handle CUmemGenericAllocationHandle) CUresult
+
 	CuFuncSetAttribute     func(fn CUfunction, attrib int32, value int32) CUresult
 	CuFuncGetAttribute     func(value *int32, attrib int32, fn CUfunction) CUresult
 	CuPointerGetAttribute  func(data unsafe.Pointer, attribute int32, ptr CUdeviceptr) CUresult
@@ -211,6 +220,15 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuMemAllocManaged, "cuMemAllocManaged"},
 		{&d.CuMemPrefetchAsync, "cuMemPrefetchAsync"},
 		{&d.CuMemAdvise, "cuMemAdvise"},
+		// virtual memory management (CUDA 10.2+)
+		{&d.CuMemGetAllocationGranularity, "cuMemGetAllocationGranularity"},
+		{&d.CuMemCreate, "cuMemCreate"},
+		{&d.CuMemAddressReserve, "cuMemAddressReserve"},
+		{&d.CuMemMap, "cuMemMap"},
+		{&d.CuMemSetAccess, "cuMemSetAccess"},
+		{&d.CuMemUnmap, "cuMemUnmap"},
+		{&d.CuMemAddressFree, "cuMemAddressFree"},
+		{&d.CuMemRelease, "cuMemRelease"},
 		// kernel and pointer attributes (CUDA 6.5+ / 4.0+)
 		{&d.CuFuncSetAttribute, "cuFuncSetAttribute"},
 		{&d.CuFuncGetAttribute, "cuFuncGetAttribute"},
