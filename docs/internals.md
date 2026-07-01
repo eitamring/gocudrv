@@ -220,14 +220,16 @@ driver lacks the symbol):
 | `cuMemUnmap` | `CuMemUnmap` | virtual memory | CUDA 10.2 |
 | `cuMemAddressFree` | `CuMemAddressFree` | virtual memory | CUDA 10.2 |
 | `cuMemRelease` | `CuMemRelease` | virtual memory | CUDA 10.2 |
+| `cuLaunchCooperativeKernel` | `CuLaunchCooperativeKernel` | cooperative launch | CUDA 9.0 |
 
 ### minimum practical driver version
 
 Only the core set must be present for `Load` to succeed, and those symbols have
 been stable across many CUDA releases, so the practical floor for loading is
 well below the newest features. The feature groups set their own floors, and
-only when used: async allocation needs CUDA 11.2 and graphs need a CUDA 11.x
-driver. On an older driver `Load` still succeeds; calling an unavailable feature
+only when used: async allocation needs CUDA 11.2, graphs need a CUDA 11.x
+driver, virtual memory needs CUDA 10.2, and cooperative launch needs CUDA 9.0.
+On an older driver `Load` still succeeds; calling an unavailable feature
 returns `ErrSymbolUnavailable` (matchable with `errors.Is`), so the gap is
 explicit and local to the call rather than a hard failure at init.
 

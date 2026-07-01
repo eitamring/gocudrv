@@ -79,6 +79,7 @@ var (
 	ErrLaunchOutOfResources       = cudaresult.ErrLaunchOutOfResources
 	ErrLaunchTimeout              = cudaresult.ErrLaunchTimeout
 	ErrLaunchFailed               = cudaresult.ErrLaunchFailed
+	ErrCooperativeLaunchTooLarge  = cudaresult.ErrCooperativeLaunchTooLarge
 	ErrNotPermitted               = cudaresult.ErrNotPermitted
 	ErrNotSupported               = cudaresult.ErrNotSupported
 	ErrSystemNotReady             = cudaresult.ErrSystemNotReady
