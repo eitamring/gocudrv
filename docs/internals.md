@@ -198,6 +198,8 @@ driver lacks the symbol):
 | `cuMemAllocPitch_v2` | `CuMemAllocPitch` | pitched memory | CUDA 3.2 |
 | `cuMemcpy2D_v2` | `CuMemcpy2D` | pitched memory | CUDA 3.2 |
 | `cuMemcpy2DAsync_v2` | `CuMemcpy2DAsync` | pitched memory | CUDA 3.2 |
+| `cuMemcpy3D_v2` | `CuMemcpy3D` | 3D copy | CUDA 3.2 |
+| `cuMemcpy3DAsync_v2` | `CuMemcpy3DAsync` | 3D copy | CUDA 3.2 |
 | `cuDeviceGetDefaultMemPool` | `CuDeviceGetDefaultMemPool` | memory pools | CUDA 11.2 |
 | `cuMemPoolGetAttribute` | `CuMemPoolGetAttribute` | memory pools | CUDA 11.2 |
 | `cuMemPoolSetAttribute` | `CuMemPoolSetAttribute` | memory pools | CUDA 11.2 |

@@ -43,3 +43,25 @@ func Memcpy2DAsync(d *cudasys.Driver, desc *cudasys.Memcpy2D, stream cudasys.CUs
 	}
 	return check("cuMemcpy2DAsync_v2", d.CuMemcpy2DAsync(desc, stream))
 }
+
+// Memcpy3D performs the 3D copy described by desc.
+func Memcpy3D(d *cudasys.Driver, desc *cudasys.Memcpy3D) error {
+	if d == nil {
+		return ErrNotInitialized
+	}
+	if d.CuMemcpy3D == nil {
+		return ErrSymbolUnavailable
+	}
+	return check("cuMemcpy3D_v2", d.CuMemcpy3D(desc))
+}
+
+// Memcpy3DAsync performs the 3D copy described by desc, enqueued on stream.
+func Memcpy3DAsync(d *cudasys.Driver, desc *cudasys.Memcpy3D, stream cudasys.CUstream) error {
+	if d == nil {
+		return ErrNotInitialized
+	}
+	if d.CuMemcpy3DAsync == nil {
+		return ErrSymbolUnavailable
+	}
+	return check("cuMemcpy3DAsync_v2", d.CuMemcpy3DAsync(desc, stream))
+}

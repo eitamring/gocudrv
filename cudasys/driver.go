@@ -53,6 +53,8 @@ type Driver struct {
 	CuMemAllocPitch             func(dptr *CUdeviceptr, pitch *uint64, widthInBytes uint64, height uint64, elementSizeBytes uint32) CUresult
 	CuMemcpy2D                  func(pCopy *Memcpy2D) CUresult
 	CuMemcpy2DAsync             func(pCopy *Memcpy2D, stream CUstream) CUresult
+	CuMemcpy3D                  func(pCopy *Memcpy3D) CUresult
+	CuMemcpy3DAsync             func(pCopy *Memcpy3D, stream CUstream) CUresult
 	CuDeviceGetDefaultMemPool   func(pool *CUmemoryPool, dev CUdevice) CUresult
 	CuMemPoolGetAttribute       func(pool CUmemoryPool, attr int32, value unsafe.Pointer) CUresult
 	CuMemPoolSetAttribute       func(pool CUmemoryPool, attr int32, value unsafe.Pointer) CUresult
@@ -208,10 +210,12 @@ func Load(lib dynload.Library) (*Driver, error) {
 		// host memory registration (CUDA 6.5+)
 		{&d.CuMemHostRegister, "cuMemHostRegister_v2"},
 		{&d.CuMemHostUnregister, "cuMemHostUnregister"},
-		// pitched allocation and 2D copies (CUDA 3.2+)
+		// pitched allocation and 2D/3D copies (CUDA 3.2+)
 		{&d.CuMemAllocPitch, "cuMemAllocPitch_v2"},
 		{&d.CuMemcpy2D, "cuMemcpy2D_v2"},
 		{&d.CuMemcpy2DAsync, "cuMemcpy2DAsync_v2"},
+		{&d.CuMemcpy3D, "cuMemcpy3D_v2"},
+		{&d.CuMemcpy3DAsync, "cuMemcpy3DAsync_v2"},
 		// memory pools (CUDA 11.2+)
 		{&d.CuDeviceGetDefaultMemPool, "cuDeviceGetDefaultMemPool"},
 		{&d.CuMemPoolGetAttribute, "cuMemPoolGetAttribute"},

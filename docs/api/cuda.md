@@ -440,6 +440,28 @@ The 2D copies use the `CUDA_MEMCPY2D` descriptor, so host rows are treated as
 packed (`Pitch == Width*sizeof(T)`) while device rows use the allocation pitch.
 This stays a generic CUDA primitive: no image or tensor semantics are implied.
 
+## volumes (3D)
+
+`Volume[T]` is the 3D analogue of `PitchedBuffer`: a `Width`-by-`Height`-by-`Depth`
+region (in elements) laid out as `Depth` slices of `Height` padded rows and
+copied with `cuMemcpy3D`. It is backed by `cuMemAllocPitch` over `Height*Depth`
+rows, so `Pitch` is the driver-chosen row stride shared by every slice.
+
+- `func AllocVolume[T Supported](ctx *Context, width, height, depth int) (*Volume[T], error)`
+  allocates the padded region. Rejects a nil context, non-positive dimensions,
+  and byte or element-count overflow; returns `ErrSymbolUnavailable` on a driver
+  without `cuMemAllocPitch`.
+- `(*Volume[T]).Width()`, `Height()`, `Depth()`, `Pitch()`, `DevicePtr()` report
+  the geometry and device pointer.
+- `(*Volume[T]).CopyFrom(ctx, src []T)` and `CopyTo(ctx, dst []T)` move a packed
+  host slice of `Width*Height*Depth` elements to and from the volume, adding and
+  dropping the row padding (`cuMemcpy3D`). The slice length must match.
+- `(*Volume[T]).Close()` frees with `cuMemFree`. Idempotent.
+
+The 3D copies use the `CUDA_MEMCPY3D` descriptor with the host side packed and
+the device side pitched. Like the 2D case this is a generic memory primitive;
+CUDA arrays, textures, and sub-region boxes are out of scope here.
+
 ## memory pools
 
 `MemoryPool` is a handle to a device's stream-ordered memory pool, the allocator

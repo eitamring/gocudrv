@@ -162,6 +162,8 @@ var expectedOptionalOrder = []string{
 	"cuMemAllocPitch_v2",
 	"cuMemcpy2D_v2",
 	"cuMemcpy2DAsync_v2",
+	"cuMemcpy3D_v2",
+	"cuMemcpy3DAsync_v2",
 	"cuDeviceGetDefaultMemPool",
 	"cuMemPoolGetAttribute",
 	"cuMemPoolSetAttribute",
