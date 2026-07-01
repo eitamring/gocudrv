@@ -90,6 +90,7 @@ values. Named attributes currently exposed:
 | `DeviceAttributeMaxSharedMemoryPerMultiprocessor` | 81 |
 | `DeviceAttributeMaxRegistersPerMultiprocessor` | 82 |
 | `DeviceAttributeManagedMemory` | 83 |
+| `DeviceAttributeCooperativeLaunch` | 95 |
 
 Pass `cuda.DeviceAttribute(value)` for CUDA attributes not yet named.
 
@@ -812,6 +813,31 @@ referenced `Buffer` open and unchanged for as long as you launch it, and do not
 copy a `PackedArgs` value (pass the pointer `Pack` returns). For one-off
 launches, `Launch` is simpler and safer.
 
+### cooperative launches
+
+A cooperative kernel's blocks can synchronize as a whole grid (a grid-wide
+barrier), which the hardware allows only when every block is co-resident on the
+device at once.
+
+```go
+maxBlocks, err := fn.MaxCooperativeGridBlocks(256, 0) // co-resident ceiling
+cfg := cuda.LaunchConfig1D(n, 256)
+if int(cfg.GridX) <= maxBlocks {
+    err = fn.LaunchCooperative(context.Background(), cfg, cuda.Arg(buf), cuda.ArgValue(int32(n)))
+}
+```
+
+- `(*Function).LaunchCooperative(ctx, cfg, args...)` and
+  `LaunchCooperativeOn(ctx, stream, cfg, args...)` launch through
+  `cuLaunchCooperativeKernel`, taking the same arguments and lifetime rules as
+  `Launch`. They return `ErrSymbolUnavailable` on a driver without the symbol.
+- `(*Function).MaxCooperativeGridBlocks(blockSize, dynamicSharedMem int) (int, error)`
+  returns the largest total block count that stays co-resident: the device's
+  multiprocessor count times `MaxActiveBlocksPerSM`. The driver rejects a
+  cooperative launch whose grid exceeds this with `ErrCooperativeLaunchTooLarge`.
+  `DeviceAttributeCooperativeLaunch` reports whether the device supports
+  cooperative launch at all.
+
 ## occupancy
 
 Occupancy is how many of a multiprocessor's warp slots a kernel can fill. These
@@ -1014,7 +1040,7 @@ ErrNoBinaryForGPU, ErrInvalidPTX, ErrUnsupportedPTXVersion, ErrInvalidSource,
 ErrFileNotFound, ErrSharedObjectSymbolNotFound, ErrSharedObjectInitFailed,
 ErrOperatingSystem, ErrInvalidHandle, ErrIllegalState, ErrNotFound,
 ErrNotReady, ErrIllegalAddress, ErrLaunchOutOfResources, ErrLaunchTimeout,
-ErrLaunchFailed, ErrNotPermitted, ErrNotSupported, ErrSystemNotReady,
+ErrLaunchFailed, ErrCooperativeLaunchTooLarge, ErrNotPermitted, ErrNotSupported, ErrSystemNotReady,
 ErrSystemDriverMismatch, ErrStreamCaptureUnsupported, ErrStreamCaptureInvalidated,
 ErrStreamCaptureMerge, ErrStreamCaptureUnmatched, ErrStreamCaptureUnjoined,
 ErrStreamCaptureIsolation, ErrStreamCaptureImplicit, ErrCapturedEvent,
@@ -1024,7 +1050,8 @@ ErrExternalDevice, ErrUnknown
 
 Go-side sentinels:
 
-- `ErrSymbolUnavailable`: an optional feature symbol (async allocation, occupancy, graphs, or device diagnostics) was not present in the loaded driver, so that call cannot run. Core APIs are unaffected, so this is local to the feature rather than a load-time failure.
+- `ErrSymbolUnavailable`: an optional feature symbol (for example async allocation, graphs, virtual memory, or cooperative launch) was not present in the loaded driver, so that call cannot run. Core APIs are unaffected, so this is local to the feature rather than a load-time failure.
+- `ErrCooperativeLaunchTooLarge`: a cooperative launch requested a grid larger than the device can keep co-resident. Size it with `MaxCooperativeGridBlocks`.
 - `ErrInvalidOrdinal`: `GetDevice` rejected the ordinal before calling CUDA.
 - `ErrNilDevice`: a method was called on a nil `*Device`.
 - `ErrNilContext`: a method was called on a nil `*Context`.

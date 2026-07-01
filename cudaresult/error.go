@@ -73,6 +73,7 @@ var (
 	ErrLaunchOutOfResources       = &Error{Code: cudasys.CUDA_ERROR_LAUNCH_OUT_OF_RESOURCES}
 	ErrLaunchTimeout              = &Error{Code: cudasys.CUDA_ERROR_LAUNCH_TIMEOUT}
 	ErrLaunchFailed               = &Error{Code: cudasys.CUDA_ERROR_LAUNCH_FAILED}
+	ErrCooperativeLaunchTooLarge  = &Error{Code: cudasys.CUDA_ERROR_COOPERATIVE_LAUNCH_TOO_LARGE}
 	ErrNotPermitted               = &Error{Code: cudasys.CUDA_ERROR_NOT_PERMITTED}
 	ErrNotSupported               = &Error{Code: cudasys.CUDA_ERROR_NOT_SUPPORTED}
 	ErrSystemNotReady             = &Error{Code: cudasys.CUDA_ERROR_SYSTEM_NOT_READY}

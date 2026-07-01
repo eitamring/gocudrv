@@ -152,10 +152,15 @@ type launchOp struct {
 	cfg    LaunchConfig
 	fn     cudasys.CUfunction
 	stream cudasys.CUstream
+	coop   bool
 }
 
 func (o *launchOp) Run() error {
-	return cudaresult.LaunchKernel(
+	launch := cudaresult.LaunchKernel
+	if o.coop {
+		launch = cudaresult.LaunchCooperativeKernel
+	}
+	return launch(
 		o.driver, o.fn,
 		o.cfg.GridX, o.cfg.GridY, o.cfg.GridZ,
 		o.cfg.BlockX, o.cfg.BlockY, o.cfg.BlockZ,
@@ -165,9 +170,9 @@ func (o *launchOp) Run() error {
 
 var launchOpPool = sync.Pool{New: func() any { return new(launchOp) }}
 
-func (c *Context) launchKernel(ctx context.Context, fn cudasys.CUfunction, cfg LaunchConfig, stream cudasys.CUstream, params *unsafe.Pointer) error {
+func (c *Context) launchKernel(ctx context.Context, fn cudasys.CUfunction, cfg LaunchConfig, stream cudasys.CUstream, params *unsafe.Pointer, cooperative bool) error {
 	o := launchOpPool.Get().(*launchOp)
-	o.driver, o.fn, o.cfg, o.stream, o.params = c.driver, fn, cfg, stream, params
+	o.driver, o.fn, o.cfg, o.stream, o.params, o.coop = c.driver, fn, cfg, stream, params, cooperative
 	err := c.doJob(ctx, o)
 	launchOpPool.Put(o)
 	return err

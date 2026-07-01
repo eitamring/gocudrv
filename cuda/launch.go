@@ -182,7 +182,7 @@ func (a rawKernelArg) appendKernelArg(b *kernelArgBuilder) error {
 // Context.Synchronize before reading outputs or closing resources used by the
 // launch.
 func (f *Function) Launch(ctx context.Context, cfg LaunchConfig, args ...KernelArg) error {
-	return f.launch(ctx, defaultStream, nil, cfg, args...)
+	return f.launch(ctx, defaultStream, nil, cfg, false, args...)
 }
 
 // LaunchOn enqueues the function on stream. The stream must belong to the same
@@ -200,10 +200,10 @@ func (f *Function) LaunchOn(ctx context.Context, stream *Stream, cfg LaunchConfi
 	if stream.closed {
 		return ErrStreamClosed
 	}
-	return f.launch(ctx, stream.raw, stream.ctx, cfg, args...)
+	return f.launch(ctx, stream.raw, stream.ctx, cfg, false, args...)
 }
 
-func (f *Function) launch(ctx context.Context, rawStream cudasys.CUstream, streamCtx *Context, cfg LaunchConfig, args ...KernelArg) error {
+func (f *Function) launch(ctx context.Context, rawStream cudasys.CUstream, streamCtx *Context, cfg LaunchConfig, cooperative bool, args ...KernelArg) error {
 	if f == nil {
 		return ErrNilFunction
 	}
@@ -235,7 +235,7 @@ func (f *Function) launch(ctx context.Context, rawStream cudasys.CUstream, strea
 		}
 	}
 
-	err := f.module.ctx.launchKernel(ctx, f.raw, cfg, rawStream, pk.Params())
+	err := f.module.ctx.launchKernel(ctx, f.raw, cfg, rawStream, pk.Params(), cooperative)
 	pk.KeepAlive()
 	return err
 }
@@ -322,7 +322,7 @@ func (f *Function) launchPacked(ctx context.Context, rawStream cudasys.CUstream,
 	if f.module.closed {
 		return ErrModuleClosed
 	}
-	err := f.module.ctx.launchKernel(ctx, f.raw, cfg, rawStream, p.packed.Params())
+	err := f.module.ctx.launchKernel(ctx, f.raw, cfg, rawStream, p.packed.Params(), false)
 	runtime.KeepAlive(p)
 	return err
 }

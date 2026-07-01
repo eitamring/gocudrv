@@ -39,4 +39,5 @@ const (
 	DeviceAttributeMaxSharedMemoryPerMultiprocessor DeviceAttribute = 81
 	DeviceAttributeMaxRegistersPerMultiprocessor    DeviceAttribute = 82
 	DeviceAttributeManagedMemory                    DeviceAttribute = 83
+	DeviceAttributeCooperativeLaunch                DeviceAttribute = 95
 )

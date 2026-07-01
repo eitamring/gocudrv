@@ -75,6 +75,7 @@ type Driver struct {
 	CuEventSynchronize          func(event CUevent) CUresult
 	CuEventElapsedTime          func(ms *float32, start CUevent, end CUevent) CUresult
 	CuLaunchKernel              func(fn CUfunction, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemBytes uint32, stream CUstream, kernelParams *unsafe.Pointer, extra *unsafe.Pointer) CUresult
+	CuLaunchCooperativeKernel   func(fn CUfunction, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemBytes uint32, stream CUstream, kernelParams *unsafe.Pointer) CUresult
 
 	CuOccupancyMaxActiveBlocksPerMultiprocessor func(numBlocks *int32, fn CUfunction, blockSize int32, dynamicSMemSize uint64) CUresult
 	CuOccupancyMaxPotentialBlockSize            func(minGridSize *int32, blockSize *int32, fn CUfunction, blockSizeToDynamicSMemSize uintptr, dynamicSMemSize uint64, blockSizeLimit int32) CUresult
@@ -238,6 +239,7 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuCtxEnablePeerAccess, "cuCtxEnablePeerAccess"},
 		{&d.CuCtxDisablePeerAccess, "cuCtxDisablePeerAccess"},
 		{&d.CuMemcpyPeer, "cuMemcpyPeer"},
+		{&d.CuLaunchCooperativeKernel, "cuLaunchCooperativeKernel"},
 	}
 	for _, b := range required {
 		if err := bindFn(lib, b.fn, b.name); err != nil {
