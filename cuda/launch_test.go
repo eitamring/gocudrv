@@ -322,6 +322,28 @@ func TestFunctionLaunchCanceledBeforeSubmit(t *testing.T) {
 	}
 }
 
+func TestFunctionLaunchDuplicateBufferArg(t *testing.T) {
+	_, _, fn, buf := newLaunchFixture(t)
+	cfg := LaunchConfig1D(1024, 256)
+	cfg.SharedMemBytes = 32
+	done := make(chan error, 1)
+	go func() {
+		done <- fn.Launch(context.Background(), cfg,
+			Arg(buf), Arg(buf), ArgValue(int32(1)), ArgValue(uint32(2)), ArgValue(float32(3)))
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Launch with duplicate arg: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Launch with duplicate arg deadlocked")
+	}
+	if err := buf.Close(); err != nil {
+		t.Errorf("Close after duplicate-arg launch = %v (lock not fully released?)", err)
+	}
+}
+
 func TestFunctionLaunchHoldsModuleAndBufferLocksDuringCall(t *testing.T) {
 	launchEntered := make(chan struct{})
 	mayFinish := make(chan struct{})
