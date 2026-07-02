@@ -268,8 +268,8 @@ func (f *Function) launch(ctx context.Context, rawStream cudasys.CUstream, strea
 
 // PackedArgs is a kernel argument list packed once for repeated low-overhead
 // launches. It captures raw handles at pack time and takes no per-launch locks,
-// so keep every referenced Buffer and Texture (and its array) open and
-// unchanged while it is used. Build one with Pack and launch it with
+// so keep every referenced Buffer, Texture, and Surface (and their arrays) open
+// and unchanged while it is used. Build one with Pack and launch it with
 // Function.LaunchPacked; do not copy it, pass the pointer Pack returns.
 type PackedArgs struct {
 	packed argpack.Builder

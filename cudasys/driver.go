@@ -56,9 +56,12 @@ type Driver struct {
 	CuMemcpy3D                  func(pCopy *Memcpy3D) CUresult
 	CuMemcpy3DAsync             func(pCopy *Memcpy3D, stream CUstream) CUresult
 	CuArrayCreate               func(pHandle *CUarray, pAllocateArray *CUDA_ARRAY_DESCRIPTOR) CUresult
+	CuArray3DCreate             func(pHandle *CUarray, pAllocateArray *CUDA_ARRAY3D_DESCRIPTOR) CUresult
 	CuArrayDestroy              func(hArray CUarray) CUresult
 	CuTexObjectCreate           func(pTexObject *CUtexObject, pResDesc *CUDA_RESOURCE_DESC, pTexDesc *CUDA_TEXTURE_DESC, pResViewDesc unsafe.Pointer) CUresult
 	CuTexObjectDestroy          func(texObject CUtexObject) CUresult
+	CuSurfObjectCreate          func(pSurfObject *CUsurfObject, pResDesc *CUDA_RESOURCE_DESC) CUresult
+	CuSurfObjectDestroy         func(surfObject CUsurfObject) CUresult
 	CuDeviceGetDefaultMemPool   func(pool *CUmemoryPool, dev CUdevice) CUresult
 	CuMemPoolGetAttribute       func(pool CUmemoryPool, attr int32, value unsafe.Pointer) CUresult
 	CuMemPoolSetAttribute       func(pool CUmemoryPool, attr int32, value unsafe.Pointer) CUresult
@@ -221,9 +224,12 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuMemcpy3D, "cuMemcpy3D_v2"},
 		{&d.CuMemcpy3DAsync, "cuMemcpy3DAsync_v2"},
 		{&d.CuArrayCreate, "cuArrayCreate_v2"},
+		{&d.CuArray3DCreate, "cuArray3DCreate_v2"},
 		{&d.CuArrayDestroy, "cuArrayDestroy"},
 		{&d.CuTexObjectCreate, "cuTexObjectCreate"},
 		{&d.CuTexObjectDestroy, "cuTexObjectDestroy"},
+		{&d.CuSurfObjectCreate, "cuSurfObjectCreate"},
+		{&d.CuSurfObjectDestroy, "cuSurfObjectDestroy"},
 		// memory pools (CUDA 11.2+)
 		{&d.CuDeviceGetDefaultMemPool, "cuDeviceGetDefaultMemPool"},
 		{&d.CuMemPoolGetAttribute, "cuMemPoolGetAttribute"},

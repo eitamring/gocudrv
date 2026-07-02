@@ -47,6 +47,9 @@ var (
 	ErrNilTexture            = errors.New("cuda: nil texture")
 	ErrTextureClosed         = errors.New("cuda: texture is closed")
 	ErrUnsupportedElement    = errors.New("cuda: element type not supported by CUDA arrays")
+	ErrNilSurface            = errors.New("cuda: nil surface")
+	ErrSurfaceClosed         = errors.New("cuda: surface is closed")
+	ErrNoSurfaceStore        = errors.New("cuda: array was not allocated with surface store")
 )
 
 // Error is the typed error returned for non-success CUDA result codes.
