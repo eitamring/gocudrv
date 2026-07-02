@@ -160,9 +160,7 @@ func (v *Volume[T]) CopyFrom(ctx context.Context, src []T) error {
 		return ErrLengthMismatch
 	}
 	desc := v.hostDesc(true, unsafe.Pointer(&src[0]))
-	e := v.ctx.doWait(ctx, func() error {
-		return cudaresult.Memcpy3D(v.ctx.driver, &desc)
-	})
+	e := v.ctx.memcpy3D(ctx, &desc)
 	runtime.KeepAlive(src)
 	return e
 }
@@ -186,9 +184,7 @@ func (v *Volume[T]) CopyTo(ctx context.Context, dst []T) error {
 		return ErrLengthMismatch
 	}
 	desc := v.hostDesc(false, unsafe.Pointer(&dst[0]))
-	e := v.ctx.doWait(ctx, func() error {
-		return cudaresult.Memcpy3D(v.ctx.driver, &desc)
-	})
+	e := v.ctx.memcpy3D(ctx, &desc)
 	runtime.KeepAlive(dst)
 	return e
 }

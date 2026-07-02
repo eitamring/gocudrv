@@ -23,6 +23,15 @@ func benchDriver() *cudasys.Driver {
 	d.CuStreamCreate = func(s *cudasys.CUstream, _ uint32) cudasys.CUresult { *s = 0x5151; return cudasys.CUDA_SUCCESS }
 	d.CuStreamDestroy = func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_SUCCESS }
 	d.CuStreamSynchronize = func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_SUCCESS }
+	d.CuEventCreate = func(e *cudasys.CUevent, _ uint32) cudasys.CUresult { *e = 0xE0E0; return cudasys.CUDA_SUCCESS }
+	d.CuEventDestroy = func(cudasys.CUevent) cudasys.CUresult { return cudasys.CUDA_SUCCESS }
+	d.CuEventRecord = func(cudasys.CUevent, cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_SUCCESS }
+	d.CuMemAllocPitch = func(ptr *cudasys.CUdeviceptr, pitch *uint64, _, _ uint64, _ uint32) cudasys.CUresult {
+		*ptr = 0xB000
+		*pitch = 512
+		return cudasys.CUDA_SUCCESS
+	}
+	d.CuMemcpy2D = func(*cudasys.Memcpy2D) cudasys.CUresult { return cudasys.CUDA_SUCCESS }
 	d.CuStreamBeginCapture = func(cudasys.CUstream, uint32) cudasys.CUresult { return cudasys.CUDA_SUCCESS }
 	d.CuStreamEndCapture = func(_ cudasys.CUstream, g *cudasys.CUgraph) cudasys.CUresult {
 		*g = 0x6A6A
@@ -212,6 +221,62 @@ func BenchmarkGraphLaunch(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := exec.Launch(context.Background(), stream); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkStreamSynchronize(b *testing.B) {
+	ctx := benchContext(b)
+	stream, err := ctx.NewStream()
+	if err != nil {
+		b.Fatalf("NewStream: %v", err)
+	}
+	b.Cleanup(func() { _ = stream.Close() })
+	bg := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := stream.Synchronize(bg); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkEventRecord(b *testing.B) {
+	ctx := benchContext(b)
+	stream, err := ctx.NewStream()
+	if err != nil {
+		b.Fatalf("NewStream: %v", err)
+	}
+	b.Cleanup(func() { _ = stream.Close() })
+	ev, err := ctx.NewEvent()
+	if err != nil {
+		b.Fatalf("NewEvent: %v", err)
+	}
+	b.Cleanup(func() { _ = ev.Close() })
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := ev.Record(stream); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPitchedCopy(b *testing.B) {
+	ctx := benchContext(b)
+	pb, err := AllocPitched[float32](ctx, 64, 8)
+	if err != nil {
+		b.Fatalf("AllocPitched: %v", err)
+	}
+	b.Cleanup(func() { _ = pb.Close() })
+	src := make([]float32, 64*8)
+	bg := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := pb.CopyFrom(bg, src); err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -242,3 +242,158 @@ func TestRetireThenClose(t *testing.T) {
 		t.Errorf("Do after retired Close = %v, want ErrExecutorClosed", err)
 	}
 }
+
+func TestCloseRunsQueuedTask(t *testing.T) {
+	e := New()
+	gate := make(chan struct{})
+	started := make(chan struct{})
+	first := make(chan error, 1)
+	second := make(chan error, 1)
+	go func() {
+		first <- e.Do(func() error { close(started); <-gate; return nil })
+	}()
+	<-started
+	go func() {
+		second <- e.Do(func() error { return nil })
+	}()
+	time.Sleep(20 * time.Millisecond)
+	closed := make(chan error, 1)
+	go func() { closed <- e.Close() }()
+	time.Sleep(20 * time.Millisecond)
+	close(gate)
+	for name, ch := range map[string]chan error{"first": first, "second": second, "close": closed} {
+		select {
+		case err := <-ch:
+			if err != nil {
+				t.Errorf("%s = %v, want nil", name, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s hung: queued task abandoned on Close", name)
+		}
+	}
+}
+
+func TestDoCtxCancelDuringSpin(t *testing.T) {
+	e := New()
+	t.Cleanup(func() { _ = e.Close() })
+	gate := make(chan struct{})
+	started := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- e.DoCtx(ctx, func() error { close(started); <-gate; return nil })
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("DoCtx = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("DoCtx hung")
+	}
+	close(gate)
+}
+
+type recJob struct {
+	gate     chan struct{}
+	started  chan struct{}
+	recycles atomic.Int32
+}
+
+func (j *recJob) Run() error {
+	if j.started != nil {
+		close(j.started)
+	}
+	if j.gate != nil {
+		<-j.gate
+	}
+	return nil
+}
+
+func (j *recJob) Recycle() { j.recycles.Add(1) }
+
+func waitRecycles(t *testing.T, j *recJob, want int32) {
+	t.Helper()
+	for i := 0; i < 500; i++ {
+		if j.recycles.Load() == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("recycles = %d, want %d", j.recycles.Load(), want)
+}
+
+func TestDoJobCtxCancelRecyclesAbandonedJob(t *testing.T) {
+	e := New()
+	t.Cleanup(func() { _ = e.Close() })
+	j := &recJob{gate: make(chan struct{}), started: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- e.DoJobCtx(ctx, j) }()
+	<-j.started
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("DoJobCtx = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("DoJobCtx hung")
+	}
+	close(j.gate)
+	waitRecycles(t, j, 1)
+}
+
+func TestRejectedJobIsRecycled(t *testing.T) {
+	closed := New()
+	if err := closed.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	j := &recJob{}
+	if err := closed.DoJob(context.Background(), j); !errors.Is(err, ErrExecutorClosed) {
+		t.Fatalf("DoJob on closed = %v, want ErrExecutorClosed", err)
+	}
+	waitRecycles(t, j, 1)
+
+	e := New()
+	t.Cleanup(func() { _ = e.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	j2 := &recJob{}
+	if err := e.DoJobCtx(ctx, j2); !errors.Is(err, context.Canceled) {
+		t.Fatalf("DoJobCtx pre-canceled = %v, want context.Canceled", err)
+	}
+	waitRecycles(t, j2, 1)
+}
+
+func TestDrainRecyclesQueuedJob(t *testing.T) {
+	e := New()
+	gate := make(chan struct{})
+	started := make(chan struct{})
+	first := make(chan error, 1)
+	go func() {
+		first <- e.Do(func() error { close(started); <-gate; return nil })
+	}()
+	<-started
+	queued := &recJob{}
+	second := make(chan error, 1)
+	go func() { second <- e.DoJob(context.Background(), queued) }()
+	time.Sleep(20 * time.Millisecond)
+	closed := make(chan error, 1)
+	go func() { closed <- e.Close() }()
+	time.Sleep(20 * time.Millisecond)
+	close(gate)
+	for name, ch := range map[string]chan error{"first": first, "second": second, "close": closed} {
+		select {
+		case err := <-ch:
+			if err != nil {
+				t.Errorf("%s = %v, want nil", name, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s hung", name)
+		}
+	}
+	waitRecycles(t, queued, 1)
+}

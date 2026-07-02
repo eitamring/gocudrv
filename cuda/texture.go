@@ -206,9 +206,7 @@ func (a *Array2D[T]) CopyFrom(ctx context.Context, src []T) error {
 		return ErrLengthMismatch
 	}
 	desc := a.hostDesc(true, unsafe.Pointer(&src[0]))
-	err := a.ctx.doWait(ctx, func() error {
-		return cudaresult.Memcpy2D(a.ctx.driver, &desc)
-	})
+	err := a.ctx.memcpy2D(ctx, &desc)
 	runtime.KeepAlive(src)
 	return err
 }
@@ -228,9 +226,7 @@ func (a *Array2D[T]) CopyTo(ctx context.Context, dst []T) error {
 		return ErrLengthMismatch
 	}
 	desc := a.hostDesc(false, unsafe.Pointer(&dst[0]))
-	err := a.ctx.doWait(ctx, func() error {
-		return cudaresult.Memcpy2D(a.ctx.driver, &desc)
-	})
+	err := a.ctx.memcpy2D(ctx, &desc)
 	runtime.KeepAlive(dst)
 	return err
 }

@@ -269,6 +269,17 @@ caller goroutine -- exec.DoCtx(ctx, fn) --> task channel --> pinned thread
                                                                  | runs fn
 ```
 
+Dispatch latency: waking a parked goroutine across the pinned thread is
+expensive (about 100 microseconds on WSL2, sub-microsecond when neither side
+parks), so both sides of the handoff spin for a bounded window before parking.
+The worker polls its task channel for a fixed number of iterations after each
+job, and the submitter polls the result the same way before blocking; a hot
+call loop completes in about a microsecond. The cost is bounded CPU burn: a
+busy context's executor holds its P for tens of microseconds after its last
+job (relevant with many contexts or `GOMAXPROCS=1`), and an idle executor
+parks and burns nothing. Accepted tasks are drained before the executor honors
+`Close`, so a task that reached the buffered channel always runs.
+
 When `Close` stops the goroutine, the thread is unlocked back to the Go
 scheduler rather than terminated: the CUDA driver keeps thread-local state, and
 terminating a thread that held it can crash the driver (observed on WSL2). The

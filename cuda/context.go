@@ -77,9 +77,10 @@ func (c *Context) Device() *Device {
 // or ctx is canceled. Canceling ctx stops the wait; the GPU work continues
 // regardless. Pass context.Background() if no cancellation is needed.
 func (c *Context) Synchronize(ctx context.Context) error {
-	return c.do(ctx, func() error {
-		return cudaresult.CtxSynchronize(c.driver)
-	})
+	if c == nil || c.exec == nil {
+		return ErrNilContext
+	}
+	return c.doJobCtx(ctx, newSyncOp(c.driver, opCtxSync, 0, 0, 0))
 }
 
 // StreamPriorityRange returns the least and greatest meaningful stream
@@ -142,6 +143,7 @@ func (c *Context) doWait(ctx context.Context, fn func() error) error {
 // memset, and launch paths.
 func (c *Context) doJob(ctx context.Context, j executor.Job) error {
 	if c == nil || c.exec == nil {
+		executor.RecycleJob(j)
 		return ErrNilContext
 	}
 	if ctx == nil {
@@ -150,9 +152,29 @@ func (c *Context) doJob(ctx context.Context, j executor.Job) error {
 	c.opMu.RLock()
 	defer c.opMu.RUnlock()
 	if c.closed.Load() {
+		executor.RecycleJob(j)
 		return ErrContextClosed
 	}
 	return c.exec.DoJob(ctx, j)
+}
+
+// doJobCtx runs a pooled Job with the cancellation semantics of do. The job
+// must be executor-recycled (implement Recycle), never pooled by the caller.
+func (c *Context) doJobCtx(ctx context.Context, j executor.Job) error {
+	if c == nil || c.exec == nil {
+		executor.RecycleJob(j)
+		return ErrNilContext
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.opMu.RLock()
+	defer c.opMu.RUnlock()
+	if c.closed.Load() {
+		executor.RecycleJob(j)
+		return ErrContextClosed
+	}
+	return c.exec.DoJobCtx(ctx, j)
 }
 
 func (c *Context) doWith(ctx context.Context, fn func() error, waitAfterSubmit bool) error {

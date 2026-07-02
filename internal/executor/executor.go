@@ -34,7 +34,9 @@ func (e *PanicError) Is(target error) bool {
 // Job is a unit of work run on the executor's pinned thread. Implementing it
 // with a pooled pointer receiver lets a hot path submit work without allocating
 // a closure per call; DoCtx/DoCtxWait wrap a plain func in funcJob for the
-// callers that do not need that.
+// callers that do not need that. A Job that also implements Recycle() is
+// returned to its pool by the worker right after Run, which lets a cancellable
+// caller abandon the result without racing the pool.
 type Job interface {
 	Run() error
 }
@@ -74,10 +76,18 @@ type Executor struct {
 	retire    atomic.Bool
 }
 
+// Both sides of the handoff spin for these bounded windows (poll iterations)
+// before parking, because waking a parked goroutine across the pinned thread
+// costs far more than the spin (see docs/internals.md). Idle executors park.
+const (
+	workerSpin = 4096
+	callerSpin = 4096
+)
+
 // New starts a pinned-thread executor goroutine.
 func New() *Executor {
 	e := &Executor{
-		tasks: make(chan task),
+		tasks: make(chan task, 1),
 		quit:  make(chan struct{}),
 		done:  make(chan struct{}),
 	}
@@ -93,11 +103,56 @@ func (e *Executor) run() {
 			runtime.UnlockOSThread()
 		}
 	}()
+	spin := 0
 	for {
 		select {
 		case t := <-e.tasks:
-			t.result <- e.runOne(t.job)
+			e.runTask(t)
+			spin = workerSpin
+			continue
 		case <-e.quit:
+			e.drain()
+			return
+		default:
+		}
+		if spin > 0 {
+			spin--
+			continue
+		}
+		select {
+		case t := <-e.tasks:
+			e.runTask(t)
+			spin = workerSpin
+		case <-e.quit:
+			e.drain()
+			return
+		}
+	}
+}
+
+func (e *Executor) runTask(t task) {
+	err := e.runOne(t.job)
+	RecycleJob(t.job)
+	t.result <- err
+}
+
+// RecycleJob returns a worker-owned job to its pool if it implements Recycle.
+// Call it wherever a job is rejected before the worker could accept it.
+func RecycleJob(j Job) {
+	if r, ok := j.(interface{ Recycle() }); ok {
+		r.Recycle()
+	}
+}
+
+// drain runs tasks already accepted into the buffered channel when quit fires.
+// submit completes its send before Close can flip closed, so a task can sit in
+// the buffer while quit is also ready; abandoning it would hang its caller.
+func (e *Executor) drain() {
+	for {
+		select {
+		case t := <-e.tasks:
+			e.runTask(t)
+		default:
 			return
 		}
 	}
@@ -161,17 +216,35 @@ func (e *Executor) submit(ctx context.Context, j Job) (chan error, error) {
 // during the call. Panics inside fn are recovered and surfaced as
 // *PanicError; the executor keeps running.
 func (e *Executor) DoCtx(ctx context.Context, fn func() error) error {
-	res, err := e.submit(ctx, funcJob(fn))
+	return e.DoJobCtx(ctx, funcJob(fn))
+}
+
+// DoJobCtx runs j with the cancellation semantics of DoCtx: ctx can abandon
+// the wait while j still runs on the executor. A job used this way must be
+// recycled by the executor (implement Recycle), never by the caller.
+func (e *Executor) DoJobCtx(ctx context.Context, j Job) error {
+	res, err := e.submit(ctx, j)
 	if err != nil {
+		RecycleJob(j)
 		return err
+	}
+	for i := 0; i < callerSpin; i++ {
+		select {
+		case err := <-res:
+			resultPool.Put(res)
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 	}
 	select {
 	case err := <-res:
 		resultPool.Put(res)
 		return err
 	case <-ctx.Done():
-		// fn is still in flight and the executor will send to res later, so the
-		// channel cannot be recycled; let it be collected instead.
+		// The job is still in flight and the executor will send to res later, so
+		// the channel cannot be recycled; let it be collected instead.
 		return ctx.Err()
 	}
 }
@@ -191,7 +264,16 @@ func (e *Executor) DoCtxWait(ctx context.Context, fn func() error) error {
 func (e *Executor) DoJob(ctx context.Context, j Job) error {
 	res, err := e.submit(ctx, j)
 	if err != nil {
+		RecycleJob(j)
 		return err
+	}
+	for i := 0; i < callerSpin; i++ {
+		select {
+		case err := <-res:
+			resultPool.Put(res)
+			return err
+		default:
+		}
 	}
 	err = <-res
 	resultPool.Put(res)

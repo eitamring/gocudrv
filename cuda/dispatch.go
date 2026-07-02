@@ -144,6 +144,98 @@ func (c *Context) memsetAsync(ctx context.Context, dst cudasys.CUdeviceptr, val 
 	return c.run(ctx, o)
 }
 
+// syncOpKind selects which driver call a syncOp performs.
+type syncOpKind uint8
+
+const (
+	opStreamSync syncOpKind = iota
+	opStreamQuery
+	opStreamWaitEvent
+	opCtxSync
+	opEventRecord
+	opEventQuery
+	opEventSync
+)
+
+// syncOp is a pooled synchronize/query/record/wait operation. Unlike memOp it
+// is recycled by the executor (Recycle), so a cancellable wait can abandon the
+// result without racing the pool.
+type syncOp struct {
+	driver *cudasys.Driver
+	stream cudasys.CUstream
+	event  cudasys.CUevent
+	flags  uint32
+	kind   syncOpKind
+}
+
+func (o *syncOp) Run() error {
+	switch o.kind {
+	case opStreamSync:
+		return cudaresult.StreamSynchronize(o.driver, o.stream)
+	case opStreamQuery:
+		return cudaresult.StreamQuery(o.driver, o.stream)
+	case opStreamWaitEvent:
+		return cudaresult.StreamWaitEvent(o.driver, o.stream, o.event, o.flags)
+	case opCtxSync:
+		return cudaresult.CtxSynchronize(o.driver)
+	case opEventRecord:
+		return cudaresult.EventRecord(o.driver, o.event, o.stream)
+	case opEventQuery:
+		return cudaresult.EventQuery(o.driver, o.event)
+	default:
+		return cudaresult.EventSynchronize(o.driver, o.event)
+	}
+}
+
+func (o *syncOp) Recycle() { syncOpPool.Put(o) }
+
+var syncOpPool = sync.Pool{New: func() any { return new(syncOp) }}
+
+func newSyncOp(d *cudasys.Driver, kind syncOpKind, stream cudasys.CUstream, event cudasys.CUevent, flags uint32) *syncOp {
+	o := syncOpPool.Get().(*syncOp)
+	o.driver, o.kind, o.stream, o.event, o.flags = d, kind, stream, event, flags
+	return o
+}
+
+// memcpy2DOp and memcpy3DOp carry their descriptor inline so pitched, volume,
+// and array copies submit with no per-call allocation. Wait semantics only;
+// recycled by the caller like memOp.
+type memcpy2DOp struct {
+	driver *cudasys.Driver
+	desc   cudasys.Memcpy2D
+}
+
+func (o *memcpy2DOp) Run() error { return cudaresult.Memcpy2D(o.driver, &o.desc) }
+
+var memcpy2DOpPool = sync.Pool{New: func() any { return new(memcpy2DOp) }}
+
+func (c *Context) memcpy2D(ctx context.Context, desc *cudasys.Memcpy2D) error {
+	o := memcpy2DOpPool.Get().(*memcpy2DOp)
+	o.driver, o.desc = c.driver, *desc
+	err := c.doJob(ctx, o)
+	o.desc = cudasys.Memcpy2D{}
+	memcpy2DOpPool.Put(o)
+	return err
+}
+
+type memcpy3DOp struct {
+	driver *cudasys.Driver
+	desc   cudasys.Memcpy3D
+}
+
+func (o *memcpy3DOp) Run() error { return cudaresult.Memcpy3D(o.driver, &o.desc) }
+
+var memcpy3DOpPool = sync.Pool{New: func() any { return new(memcpy3DOp) }}
+
+func (c *Context) memcpy3D(ctx context.Context, desc *cudasys.Memcpy3D) error {
+	o := memcpy3DOpPool.Get().(*memcpy3DOp)
+	o.driver, o.desc = c.driver, *desc
+	err := c.doJob(ctx, o)
+	o.desc = cudasys.Memcpy3D{}
+	memcpy3DOpPool.Put(o)
+	return err
+}
+
 // launchOp is a pooled kernel-launch operation, submitted to the executor
 // without a per-launch closure.
 type launchOp struct {
