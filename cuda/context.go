@@ -198,6 +198,9 @@ func (c *Context) Close() error {
 		return releaseErr
 	}
 	c.closed.Store(true)
+	if clearErr != nil {
+		c.exec.Retire()
+	}
 	_ = c.exec.Close()
 	return clearErr
 }
