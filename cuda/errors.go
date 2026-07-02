@@ -42,6 +42,11 @@ var (
 	ErrNilGraphExec          = errors.New("cuda: nil executable graph")
 	ErrGraphExecClosed       = errors.New("cuda: executable graph is closed")
 	ErrNilMemPool            = errors.New("cuda: nil memory pool")
+	ErrNilArray              = errors.New("cuda: nil array")
+	ErrArrayClosed           = errors.New("cuda: array is closed")
+	ErrNilTexture            = errors.New("cuda: nil texture")
+	ErrTextureClosed         = errors.New("cuda: texture is closed")
+	ErrUnsupportedElement    = errors.New("cuda: element type not supported by CUDA arrays")
 )
 
 // Error is the typed error returned for non-success CUDA result codes.

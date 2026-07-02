@@ -1,0 +1,39 @@
+.version 7.0
+.target sm_50
+.address_size 64
+
+.visible .entry tex_sample(
+    .param .u64 tex_sample_param_0,
+    .param .u64 tex_sample_param_1,
+    .param .u32 tex_sample_param_2,
+    .param .u32 tex_sample_param_3
+)
+{
+    .reg .pred  %p<2>;
+    .reg .f32   %f<8>;
+    .reg .b32   %r<10>;
+    .reg .b64   %rd<8>;
+
+    ld.param.u64    %rd1, [tex_sample_param_0];
+    ld.param.u64    %rd2, [tex_sample_param_1];
+    ld.param.u32    %r2, [tex_sample_param_2];
+    ld.param.u32    %r3, [tex_sample_param_3];
+    mov.u32         %r4, %ctaid.x;
+    mov.u32         %r5, %ntid.x;
+    mov.u32         %r6, %tid.x;
+    mad.lo.s32      %r1, %r4, %r5, %r6;
+    setp.ge.s32     %p1, %r1, %r3;
+    @%p1 bra        DONE;
+
+    rem.s32         %r7, %r1, %r2;
+    div.s32         %r8, %r1, %r2;
+    cvt.rn.f32.s32  %f1, %r7;
+    cvt.rn.f32.s32  %f2, %r8;
+    tex.2d.v4.f32.f32 {%f3, %f4, %f5, %f6}, [%rd1, {%f1, %f2}];
+    mul.wide.s32    %rd3, %r1, 4;
+    add.s64         %rd4, %rd2, %rd3;
+    st.global.f32   [%rd4], %f3;
+
+DONE:
+    ret;
+}

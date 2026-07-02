@@ -462,6 +462,49 @@ The 3D copies use the `CUDA_MEMCPY3D` descriptor with the host side packed and
 the device side pitched. Like the 2D case this is a generic memory primitive;
 CUDA arrays, textures, and sub-region boxes are out of scope here.
 
+## CUDA arrays and textures
+
+`Array2D[T]` is a CUDA array: a 2D device allocation in an opaque,
+texture-optimized layout with no device pointer. A `Texture` is a sampling view
+over it that a kernel fetches through the texture cache, with addressing,
+filtering, and optional coordinate normalization.
+
+```go
+arr, err := cuda.AllocArray2D[float32](ctx, w, h)
+err = arr.CopyFrom(context.Background(), pixels)
+tex, err := cuda.NewTexture(arr, cuda.TextureConfig{
+    AddressMode: cuda.AddressClamp,
+    FilterMode:  cuda.FilterLinear,
+})
+err = fn.Launch(context.Background(), cfg, cuda.ArgTexture(tex), cuda.ArgValue(int32(w)))
+```
+
+- `func AllocArray2D[T Supported](ctx *Context, width, height int) (*Array2D[T], error)`
+  creates the array with `cuArrayCreate` (format derived from `T`, one channel).
+  CUDA arrays support 1-, 2-, and 4-byte element types, so 8-byte types return
+  `ErrUnsupportedElement`.
+- `(*Array2D[T]).CopyFrom(ctx, src []T)` and `CopyTo(ctx, dst []T)` move a
+  packed host slice of `Width*Height` elements to and from the array
+  (`cuMemcpy2D` with an array endpoint). `Width()`, `Height()`, and `Raw()`
+  report the geometry and the raw `CUarray` handle.
+- `func NewTexture[T Supported](arr *Array2D[T], cfg TextureConfig) (*Texture, error)`
+  creates a texture object over the array (`cuTexObjectCreate`).
+  `TextureConfig` sets the `AddressMode` (`AddressWrap`/`Clamp`/`Mirror`/`Border`),
+  the `FilterMode` (`FilterPoint`/`FilterLinear`; linear requires a float
+  element type), and `NormalizedCoordinates`. Integer element types are read as
+  integers automatically. Wrap and mirror addressing take effect only with
+  normalized coordinates.
+- `ArgTexture(t *Texture)` passes the texture to a kernel (the parameter is a
+  `cudaTextureObject_t`); like `Arg` it holds the texture's read lock across
+  submission. `(*Texture).Raw()` exposes the `CUtexObject` handle for sibling
+  libraries.
+- `(*Texture).Close()` then `(*Array2D[T]).Close()`: close textures before the
+  array they sample, and the array before the context. Both are idempotent and
+  leave the handle open to retry on a failed destroy.
+
+Surfaces (writable views) and layered/3D arrays are not covered yet; this is
+the read-path core: stage data in an array, sample it from a kernel.
+
 ## memory pools
 
 `MemoryPool` is a handle to a device's stream-ordered memory pool, the allocator
@@ -830,10 +873,11 @@ for step := 0; step < steps; step++ {
 - `(*Function).LaunchPacked(ctx, cfg, p)` and `LaunchPackedOn(ctx, stream, cfg, p)`
   launch with a pre-packed list and allocate nothing per launch.
 
-**Lifetime rule:** a `PackedArgs` captures device pointers, so keep every
-referenced `Buffer` open and unchanged for as long as you launch it, and do not
-copy a `PackedArgs` value (pass the pointer `Pack` returns). For one-off
-launches, `Launch` is simpler and safer.
+**Lifetime rule:** a `PackedArgs` captures device pointers and texture handles,
+so keep every referenced `Buffer` and `Texture` (and the array a texture
+samples) open and unchanged for as long as you launch it, and do not copy a
+`PackedArgs` value (pass the pointer `Pack` returns). For one-off launches,
+`Launch` is simpler and safer.
 
 ### cooperative launches
 
@@ -1030,6 +1074,9 @@ return `cudasys` types directly.
 - `(*Event).Raw() cudasys.CUevent` is the event handle.
 - `(*Buffer[T]).DevicePtr() cudasys.CUdeviceptr` is the device pointer; pair it
   with `Len` and `Bytes` for the element count and byte size.
+- `(*Array2D[T]).Raw() cudasys.CUarray` is the CUDA array handle.
+- `(*Texture).Raw() cudasys.CUtexObject` is the texture object handle (the
+  value a kernel receives as a `cudaTextureObject_t`).
 
 Each returns the zero value (or nil) on a nil receiver.
 
@@ -1107,6 +1154,9 @@ Go-side sentinels:
 - `ErrNilGraph` / `ErrGraphClosed`: a method was called on a nil or closed `*Graph`.
 - `ErrNilGraphExec` / `ErrGraphExecClosed`: a method was called on a nil or closed `*GraphExec`.
 - `ErrNilMemPool`: a method was called on a nil `*MemoryPool`.
+- `ErrNilArray` / `ErrArrayClosed`: a method was called on a nil or closed `*Array2D[T]`.
+- `ErrNilTexture` / `ErrTextureClosed`: a method was called on a nil or closed `*Texture`, or a closed texture was passed to `ArgTexture`.
+- `ErrUnsupportedElement`: `AllocArray2D` was called with an 8-byte element type, which CUDA arrays do not support.
 
 Returned CUDA errors for codes outside the table still match with:
 

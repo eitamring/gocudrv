@@ -79,6 +79,23 @@ func (b *kernelArgBuilder) addLock(mu *sync.RWMutex) {
 	b.lockCount++
 }
 
+// holdsLock reports whether mu is already held by this builder, so an argument
+// repeated in one launch does not re-acquire it: a second RLock could deadlock
+// behind a Close that is already waiting on the first.
+func (b *kernelArgBuilder) holdsLock(mu *sync.RWMutex) bool {
+	for i := 0; i < b.lockCount && i < len(b.inlineLocks); i++ {
+		if b.inlineLocks[i] == mu {
+			return true
+		}
+	}
+	for _, held := range b.overflowLocks {
+		if held == mu {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *kernelArgBuilder) release() {
 	for i := b.lockCount - 1; i >= 0; i-- {
 		if i < len(b.inlineLocks) {
@@ -102,19 +119,28 @@ func (a bufferKernelArg[T]) appendKernelArg(b *kernelArgBuilder) error {
 	if a.buffer == nil {
 		return ErrNilBuffer
 	}
-	a.buffer.opMu.RLock()
+	held := b.holdsLock(&a.buffer.opMu)
+	if !held {
+		a.buffer.opMu.RLock()
+	}
 	if a.buffer.closed {
-		a.buffer.opMu.RUnlock()
+		if !held {
+			a.buffer.opMu.RUnlock()
+		}
 		return ErrBufferClosed
 	}
 	if b.ctx != nil && a.buffer.ctx != b.ctx {
-		a.buffer.opMu.RUnlock()
+		if !held {
+			a.buffer.opMu.RUnlock()
+		}
 		return ErrContextMismatch
 	}
 	ptr := a.buffer.ptr
 	if b.snapshot {
-		a.buffer.opMu.RUnlock()
-	} else {
+		if !held {
+			a.buffer.opMu.RUnlock()
+		}
+	} else if !held {
 		b.addLock(&a.buffer.opMu)
 	}
 	b.addDevicePtr(ptr)
@@ -241,20 +267,19 @@ func (f *Function) launch(ctx context.Context, rawStream cudasys.CUstream, strea
 }
 
 // PackedArgs is a kernel argument list packed once for repeated low-overhead
-// launches. It captures device pointers and scalar values at pack time and
-// takes no per-launch locks, so unlike Launch the caller must keep every
-// referenced Buffer open and unchanged for as long as the PackedArgs is used.
-// Build one with Pack and launch it with Function.LaunchPacked. Do not copy a
-// PackedArgs; pass the pointer Pack returns.
+// launches. It captures raw handles at pack time and takes no per-launch locks,
+// so keep every referenced Buffer and Texture (and its array) open and
+// unchanged while it is used. Build one with Pack and launch it with
+// Function.LaunchPacked; do not copy it, pass the pointer Pack returns.
 type PackedArgs struct {
 	packed argpack.Builder
 }
 
 // Pack packs args into a reusable PackedArgs. It accepts the same arguments as
-// Launch, but resolves each buffer to a raw device pointer immediately rather
-// than holding its lock, so the caller owns lifetime from here on. Pack does no
-// context check; the buffers must belong to the Context the kernel is launched
-// on.
+// Launch, but resolves each buffer or texture to a raw handle immediately
+// rather than holding its lock, so the caller owns lifetime from here on. Pack
+// does no context check; the resources must belong to the Context the kernel is
+// launched on.
 func Pack(args ...KernelArg) (*PackedArgs, error) {
 	p := &PackedArgs{}
 	b := kernelArgBuilder{packed: &p.packed, snapshot: true}
