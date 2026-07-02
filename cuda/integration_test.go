@@ -24,12 +24,42 @@ func initOrSkip(t *testing.T) {
 	integrationInitOnce.Do(func() { integrationInitErr = Init() })
 	err := integrationInitErr
 	if err == nil {
+		if err := Init(); err != nil {
+			t.Fatalf("re-Init after a unit test reset the driver: %v", err)
+		}
 		return
 	}
 	if errors.Is(err, ErrOperatingSystem) || errors.Is(err, ErrSystemNotReady) || errors.Is(err, ErrNoDevice) {
 		t.Skipf("CUDA driver is not usable in this environment: %v", err)
 	}
 	t.Fatalf("Init: %v", err)
+}
+
+// TestRealContextCycles guards the executor teardown fix: retiring a pinned
+// thread that held driver TLS used to segfault the WSL2 driver within about
+// three Primary/Close cycles in one process.
+func TestRealContextCycles(t *testing.T) {
+	initOrSkip(t)
+	for i := 0; i < 20; i++ {
+		dev, err := GetDevice(0)
+		if err != nil {
+			t.Fatalf("cycle %d GetDevice: %v", i, err)
+		}
+		ctx, err := dev.Primary()
+		if err != nil {
+			t.Fatalf("cycle %d Primary: %v", i, err)
+		}
+		buf, err := Alloc[float32](ctx, 16)
+		if err != nil {
+			t.Fatalf("cycle %d Alloc: %v", i, err)
+		}
+		if err := buf.Close(); err != nil {
+			t.Fatalf("cycle %d buf Close: %v", i, err)
+		}
+		if err := ctx.Close(); err != nil {
+			t.Fatalf("cycle %d ctx Close: %v", i, err)
+		}
+	}
 }
 
 func TestRealInitAndVersion(t *testing.T) {

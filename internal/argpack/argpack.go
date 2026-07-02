@@ -19,7 +19,9 @@ type Builder struct {
 
 // Add stores v and appends a pointer to its stable storage. Values up to eight
 // bytes use inline storage for the common path; larger values or launches with
-// many arguments spill to heap-backed storage.
+// many arguments spill to heap-backed storage. Once any argument has spilled,
+// every later pointer is appended to the spill array too, so the parameter
+// array Params returns always covers all arguments in order.
 func Add[T any](b *Builder, v T) {
 	size := unsafe.Sizeof(v)
 	if b.count < inlineArgs && size <= unsafe.Sizeof(uint64(0)) {
@@ -30,6 +32,9 @@ func Add[T any](b *Builder, v T) {
 			unsafe.Slice((*byte)(unsafe.Pointer(&v)), size),
 		)
 		b.inlinePointers[b.count] = unsafe.Pointer(slot)
+		if b.spillPointers != nil {
+			b.spillPointers = append(b.spillPointers, unsafe.Pointer(slot))
+		}
 		b.count++
 		return
 	}
@@ -54,6 +59,9 @@ func AddBytes(b *Builder, data []byte) {
 		*slot = 0
 		copy(unsafe.Slice((*byte)(unsafe.Pointer(slot)), size), data)
 		b.inlinePointers[b.count] = unsafe.Pointer(slot)
+		if b.spillPointers != nil {
+			b.spillPointers = append(b.spillPointers, unsafe.Pointer(slot))
+		}
 		b.count++
 		return
 	}

@@ -90,6 +90,7 @@ values. Named attributes currently exposed:
 | `DeviceAttributeMaxSharedMemoryPerMultiprocessor` | 81 |
 | `DeviceAttributeMaxRegistersPerMultiprocessor` | 82 |
 | `DeviceAttributeManagedMemory` | 83 |
+| `DeviceAttributeConcurrentManagedAccess` | 89 |
 | `DeviceAttributeCooperativeLaunch` | 95 |
 
 Pass `cuda.DeviceAttribute(value)` for CUDA attributes not yet named.

@@ -266,8 +266,12 @@ caller goroutine -- exec.DoCtx(ctx, fn) --> task channel --> pinned thread
                                                                  | runs fn
 ```
 
-The pinned goroutine never unlocks its OS thread. When `Close` stops the
-goroutine, the runtime retires the thread, so there is no thread leak.
+When `Close` stops the goroutine, the thread is unlocked back to the Go
+scheduler rather than terminated: the CUDA driver keeps thread-local state, and
+terminating a thread that held it can crash the driver (observed on WSL2). The
+one exception is a context whose current-context unbind failed on close; its
+executor is retired so the unclean thread exits instead of hosting other
+goroutines.
 
 `DoCtx` accepts a `context.Context`. Cancellation stops the wait, not the
 GPU work; the function still runs to completion on the executor thread and

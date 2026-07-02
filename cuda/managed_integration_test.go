@@ -52,19 +52,27 @@ func TestRealManagedMemory(t *testing.T) {
 	if err := mb.Advise(AdviseSetReadMostly); err != nil && !errors.Is(err, ErrNotSupported) {
 		t.Errorf("Advise: %v", err)
 	}
-	for _, p := range []struct {
-		name string
-		fn   func(context.Context, *Stream) error
-	}{{"to-device", mb.PrefetchToDevice}, {"to-host", mb.PrefetchToHost}} {
-		if err := p.fn(bg, stream); err != nil {
-			if errors.Is(err, ErrNotSupported) {
-				t.Logf("prefetch %s not supported on this device", p.name)
-				continue
+	cma, err := dev.Attribute(DeviceAttributeConcurrentManagedAccess)
+	if err != nil {
+		t.Fatalf("concurrent-managed-access attribute: %v", err)
+	}
+	if cma == 0 {
+		t.Logf("no concurrent managed access (e.g. WSL2); skipping prefetch")
+	} else {
+		for _, p := range []struct {
+			name string
+			fn   func(context.Context, *Stream) error
+		}{{"to-device", mb.PrefetchToDevice}, {"to-host", mb.PrefetchToHost}} {
+			if err := p.fn(bg, stream); err != nil {
+				if errors.Is(err, ErrNotSupported) {
+					t.Logf("prefetch %s not supported on this device", p.name)
+					continue
+				}
+				t.Errorf("Prefetch %s: %v", p.name, err)
 			}
-			t.Errorf("Prefetch %s: %v", p.name, err)
-		}
-		if err := stream.Synchronize(bg); err != nil {
-			t.Fatalf("Synchronize after %s: %v", p.name, err)
+			if err := stream.Synchronize(bg); err != nil {
+				t.Fatalf("Synchronize after %s: %v", p.name, err)
+			}
 		}
 	}
 

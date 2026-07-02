@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 )
 
 // ErrExecutorClosed is returned by Do/DoCtx when the executor has been
@@ -57,9 +58,11 @@ type task struct {
 var resultPool = sync.Pool{New: func() any { return make(chan error, 1) }}
 
 // Executor runs functions on a single OS thread. Construct one per CUDA
-// context so that "current context" stays stable across calls. The pinned
-// goroutine never unlocks its OS thread; when Close stops it, the Go
-// runtime retires the thread automatically.
+// context so that "current context" stays stable across calls. When Close stops
+// the goroutine it unlocks the thread back to the scheduler instead of retiring
+// it: terminating a thread that holds CUDA driver TLS can crash the driver.
+// Retire opts back into termination for a thread whose state could not be
+// cleared.
 type Executor struct {
 	tasks     chan task
 	quit      chan struct{}
@@ -68,6 +71,7 @@ type Executor struct {
 	closed    bool
 	closeOnce sync.Once
 	closeErr  error
+	retire    atomic.Bool
 }
 
 // New starts a pinned-thread executor goroutine.
@@ -84,6 +88,11 @@ func New() *Executor {
 func (e *Executor) run() {
 	runtime.LockOSThread()
 	defer close(e.done)
+	defer func() {
+		if !e.retire.Load() {
+			runtime.UnlockOSThread()
+		}
+	}()
 	for {
 		select {
 		case t := <-e.tasks:
@@ -92,6 +101,13 @@ func (e *Executor) run() {
 			return
 		}
 	}
+}
+
+// Retire marks the executor's thread as unclean, so Close terminates it instead
+// of unlocking it back to the scheduler. Call it when foreign thread-local
+// state could not be cleared and must not leak to other goroutines.
+func (e *Executor) Retire() {
+	e.retire.Store(true)
 }
 
 func (e *Executor) runOne(j Job) (err error) {

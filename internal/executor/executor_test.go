@@ -228,3 +228,17 @@ func BenchmarkDoRoundTrip(b *testing.B) {
 		}
 	}
 }
+
+func TestRetireThenClose(t *testing.T) {
+	e := New()
+	if err := e.Do(func() error { return nil }); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	e.Retire()
+	if err := e.Close(); err != nil {
+		t.Fatalf("Close after Retire: %v", err)
+	}
+	if err := e.Do(func() error { return nil }); !errors.Is(err, ErrExecutorClosed) {
+		t.Errorf("Do after retired Close = %v, want ErrExecutorClosed", err)
+	}
+}
