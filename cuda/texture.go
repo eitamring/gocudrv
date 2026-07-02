@@ -48,12 +48,26 @@ type TextureConfig struct {
 // texture-optimized layout with no device pointer, the memory a Texture samples
 // from. Close it after any Texture over it and before the owning Context.
 type Array2D[T Supported] struct {
-	ctx    *Context
-	handle cudasys.CUarray
-	width  int
-	height int
-	opMu   sync.RWMutex
-	closed bool
+	ctx     *Context
+	handle  cudasys.CUarray
+	width   int
+	height  int
+	surface bool
+	opMu    sync.RWMutex
+	closed  bool
+}
+
+// ArrayOption configures AllocArray2D.
+type ArrayOption func(*arrayConfig)
+
+type arrayConfig struct {
+	surface bool
+}
+
+// WithSurfaceStore allocates the array so surfaces can read and write it
+// (cuArray3DCreate with the surface load/store flag). NewSurface requires it.
+func WithSurfaceStore() ArrayOption {
+	return func(c *arrayConfig) { c.surface = true }
 }
 
 func arrayFormat[T Supported]() (format uint32, integer, ok bool) {
@@ -78,9 +92,10 @@ func arrayFormat[T Supported]() (format uint32, integer, ok bool) {
 }
 
 // AllocArray2D creates a width-by-height CUDA array (in elements) with
-// cuArrayCreate. 8-byte element types are rejected with ErrUnsupportedElement;
-// a driver without the array symbols returns ErrSymbolUnavailable.
-func AllocArray2D[T Supported](ctx *Context, width, height int) (*Array2D[T], error) {
+// cuArrayCreate, or with cuArray3DCreate when WithSurfaceStore is requested.
+// 8-byte element types are rejected with ErrUnsupportedElement; a driver
+// without the array symbols returns ErrSymbolUnavailable.
+func AllocArray2D[T Supported](ctx *Context, width, height int, opts ...ArrayOption) (*Array2D[T], error) {
 	if ctx == nil {
 		return nil, ErrNilContext
 	}
@@ -94,16 +109,35 @@ func AllocArray2D[T Supported](ctx *Context, width, height int) (*Array2D[T], er
 	if !ok {
 		return nil, ErrUnsupportedElement
 	}
-	desc := cudasys.CUDA_ARRAY_DESCRIPTOR{
-		Width:       uint64(width),
-		Height:      uint64(height),
-		Format:      format,
-		NumChannels: 1,
+	var cfg arrayConfig
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
 	}
 
 	var handle cudasys.CUarray
 	err := ctx.do(context.Background(), func() error {
-		h, e := cudaresult.ArrayCreate(ctx.driver, &desc)
+		var h cudasys.CUarray
+		var e error
+		if cfg.surface {
+			desc := cudasys.CUDA_ARRAY3D_DESCRIPTOR{
+				Width:       uint64(width),
+				Height:      uint64(height),
+				Format:      format,
+				NumChannels: 1,
+				Flags:       cudasys.ArraySurfaceLoadStore,
+			}
+			h, e = cudaresult.Array3DCreate(ctx.driver, &desc)
+		} else {
+			desc := cudasys.CUDA_ARRAY_DESCRIPTOR{
+				Width:       uint64(width),
+				Height:      uint64(height),
+				Format:      format,
+				NumChannels: 1,
+			}
+			h, e = cudaresult.ArrayCreate(ctx.driver, &desc)
+		}
 		if e != nil {
 			return e
 		}
@@ -113,7 +147,7 @@ func AllocArray2D[T Supported](ctx *Context, width, height int) (*Array2D[T], er
 	if err != nil {
 		return nil, err
 	}
-	return &Array2D[T]{ctx: ctx, handle: handle, width: width, height: height}, nil
+	return &Array2D[T]{ctx: ctx, handle: handle, width: width, height: height, surface: cfg.surface}, nil
 }
 
 // Width is the row length in elements. It is 0 for a nil receiver.

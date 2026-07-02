@@ -1,0 +1,33 @@
+.version 7.0
+.target sm_50
+.address_size 64
+
+.visible .entry surf_write(
+    .param .u64 surf_write_param_0,
+    .param .u32 surf_write_param_1,
+    .param .u32 surf_write_param_2
+)
+{
+    .reg .pred  %p<2>;
+    .reg .b32   %r<12>;
+    .reg .b64   %rd<3>;
+
+    ld.param.u64    %rd1, [surf_write_param_0];
+    ld.param.u32    %r2, [surf_write_param_1];
+    ld.param.u32    %r3, [surf_write_param_2];
+    mov.u32         %r4, %ctaid.x;
+    mov.u32         %r5, %ntid.x;
+    mov.u32         %r6, %tid.x;
+    mad.lo.s32      %r1, %r4, %r5, %r6;
+    setp.ge.s32     %p1, %r1, %r3;
+    @%p1 bra        DONE;
+
+    rem.s32         %r7, %r1, %r2;
+    div.s32         %r8, %r1, %r2;
+    shl.b32         %r9, %r7, 2;
+    mul.lo.s32      %r10, %r1, 3;
+    sust.b.2d.b32.trap [%rd1, {%r9, %r8}], {%r10};
+
+DONE:
+    ret;
+}

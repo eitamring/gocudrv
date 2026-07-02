@@ -480,10 +480,11 @@ tex, err := cuda.NewTexture(arr, cuda.TextureConfig{
 err = fn.Launch(context.Background(), cfg, cuda.ArgTexture(tex), cuda.ArgValue(int32(w)))
 ```
 
-- `func AllocArray2D[T Supported](ctx *Context, width, height int) (*Array2D[T], error)`
-  creates the array with `cuArrayCreate` (format derived from `T`, one channel).
-  CUDA arrays support 1-, 2-, and 4-byte element types, so 8-byte types return
-  `ErrUnsupportedElement`.
+- `func AllocArray2D[T Supported](ctx *Context, width, height int, opts ...ArrayOption) (*Array2D[T], error)`
+  creates the array with `cuArrayCreate` (format derived from `T`, one channel),
+  or with `cuArray3DCreate` and the surface load/store flag when
+  `WithSurfaceStore()` is passed. CUDA arrays support 1-, 2-, and 4-byte element
+  types, so 8-byte types return `ErrUnsupportedElement`.
 - `(*Array2D[T]).CopyFrom(ctx, src []T)` and `CopyTo(ctx, dst []T)` move a
   packed host slice of `Width*Height` elements to and from the array
   (`cuMemcpy2D` with an array endpoint). `Width()`, `Height()`, and `Raw()`
@@ -503,8 +504,32 @@ err = fn.Launch(context.Background(), cfg, cuda.ArgTexture(tex), cuda.ArgValue(i
   array they sample, and the array before the context. Both are idempotent and
   leave the handle open to retry on a failed destroy.
 
-Surfaces (writable views) and layered/3D arrays are not covered yet; this is
-the read-path core: stage data in an array, sample it from a kernel.
+### surfaces
+
+A `Surface` is the writable counterpart of a `Texture`: a kernel reads and
+writes the array through it with `surf2Dread`/`surf2Dwrite` (no filtering or
+normalized coordinates; exact element access).
+
+```go
+arr, err := cuda.AllocArray2D[uint32](ctx, w, h, cuda.WithSurfaceStore())
+surf, err := cuda.NewSurface(arr)
+err = fn.Launch(context.Background(), cfg, cuda.ArgSurface(surf), cuda.ArgValue(int32(w)))
+```
+
+- `AllocArray2D` takes options: `WithSurfaceStore()` allocates through
+  `cuArray3DCreate` with the surface load/store flag, which surfaces require.
+  Plain arrays keep the old path and cannot back a surface.
+- `func NewSurface[T Supported](arr *Array2D[T]) (*Surface, error)` creates the
+  surface object (`cuSurfObjectCreate`). An array allocated without
+  `WithSurfaceStore` is rejected with `ErrNoSurfaceStore`.
+- `ArgSurface(s *Surface)` passes it to a kernel (the parameter is a
+  `cudaSurfaceObject_t`); `(*Surface).Raw()` exposes the `CUsurfObject`.
+- `(*Surface).Close()` destroys it; close surfaces (and textures) before the
+  array, and the array before the context.
+
+Layered/3D arrays are not covered yet. Together textures and surfaces complete
+the 2D array story: stage data in, sample reads through the texture cache,
+write results back through a surface.
 
 ## memory pools
 
@@ -874,11 +899,11 @@ for step := 0; step < steps; step++ {
 - `(*Function).LaunchPacked(ctx, cfg, p)` and `LaunchPackedOn(ctx, stream, cfg, p)`
   launch with a pre-packed list and allocate nothing per launch.
 
-**Lifetime rule:** a `PackedArgs` captures device pointers and texture handles,
-so keep every referenced `Buffer` and `Texture` (and the array a texture
-samples) open and unchanged for as long as you launch it, and do not copy a
-`PackedArgs` value (pass the pointer `Pack` returns). For one-off launches,
-`Launch` is simpler and safer.
+**Lifetime rule:** a `PackedArgs` captures device pointers and texture and
+surface handles, so keep every referenced `Buffer`, `Texture`, and `Surface`
+(and the arrays they view) open and unchanged for as long as you launch it, and
+do not copy a `PackedArgs` value (pass the pointer `Pack` returns). For one-off
+launches, `Launch` is simpler and safer.
 
 ### cooperative launches
 
@@ -1078,6 +1103,8 @@ return `cudasys` types directly.
 - `(*Array2D[T]).Raw() cudasys.CUarray` is the CUDA array handle.
 - `(*Texture).Raw() cudasys.CUtexObject` is the texture object handle (the
   value a kernel receives as a `cudaTextureObject_t`).
+- `(*Surface).Raw() cudasys.CUsurfObject` is the surface object handle (the
+  value a kernel receives as a `cudaSurfaceObject_t`).
 
 Each returns the zero value (or nil) on a nil receiver.
 
@@ -1158,6 +1185,8 @@ Go-side sentinels:
 - `ErrNilArray` / `ErrArrayClosed`: a method was called on a nil or closed `*Array2D[T]`.
 - `ErrNilTexture` / `ErrTextureClosed`: a method was called on a nil or closed `*Texture`, or a closed texture was passed to `ArgTexture`.
 - `ErrUnsupportedElement`: `AllocArray2D` was called with an 8-byte element type, which CUDA arrays do not support.
+- `ErrNilSurface` / `ErrSurfaceClosed`: a method was called on a nil or closed `*Surface`, or a closed surface was passed to `ArgSurface`.
+- `ErrNoSurfaceStore`: `NewSurface` was given an array allocated without `WithSurfaceStore`.
 
 Returned CUDA errors for codes outside the table still match with:
 

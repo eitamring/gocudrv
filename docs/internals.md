@@ -204,6 +204,9 @@ driver lacks the symbol):
 | `cuArrayDestroy` | `CuArrayDestroy` | arrays and textures | CUDA 3.2 |
 | `cuTexObjectCreate` | `CuTexObjectCreate` | arrays and textures | CUDA 5.0 |
 | `cuTexObjectDestroy` | `CuTexObjectDestroy` | arrays and textures | CUDA 5.0 |
+| `cuArray3DCreate_v2` | `CuArray3DCreate` | arrays and surfaces | CUDA 3.2 |
+| `cuSurfObjectCreate` | `CuSurfObjectCreate` | arrays and surfaces | CUDA 5.0 |
+| `cuSurfObjectDestroy` | `CuSurfObjectDestroy` | arrays and surfaces | CUDA 5.0 |
 | `cuDeviceGetDefaultMemPool` | `CuDeviceGetDefaultMemPool` | memory pools | CUDA 11.2 |
 | `cuMemPoolGetAttribute` | `CuMemPoolGetAttribute` | memory pools | CUDA 11.2 |
 | `cuMemPoolSetAttribute` | `CuMemPoolSetAttribute` | memory pools | CUDA 11.2 |
