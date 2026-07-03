@@ -50,6 +50,7 @@ var (
 	ErrNilSurface            = errors.New("cuda: nil surface")
 	ErrSurfaceClosed         = errors.New("cuda: surface is closed")
 	ErrNoSurfaceStore        = errors.New("cuda: array was not allocated with surface store")
+	ErrEventNotInterprocess  = errors.New("cuda: event was not created with WithEventInterprocess")
 )
 
 // Error is the typed error returned for non-success CUDA result codes.

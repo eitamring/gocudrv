@@ -531,6 +531,44 @@ Layered/3D arrays are not covered yet. Together textures and surfaces complete
 the 2D array story: stage data in, sample reads through the texture cache,
 write results back through a surface.
 
+## interprocess sharing (IPC)
+
+Device memory and events can cross process boundaries on one machine: a
+producer exports an opaque 64-byte handle, ships it over any channel (pipe,
+socket, file), and the consumer maps the same allocation.
+
+```go
+h, err := buf.IPCHandle()            // in the exporting process
+raw := h.Bytes()                     // send these 64 bytes to the other process
+
+imp, err := cuda.OpenIPCBuffer[float32](ctx, cuda.IPCMemHandleFromBytes(raw), n)
+err = imp.CopyTo(context.Background(), out)   // reads the exporter's memory
+err = imp.Close()                             // unmaps here; never frees theirs
+```
+
+- `(*Buffer[T]).IPCHandle() (IPCMemHandle, error)` exports the allocation
+  (`cuIpcGetMemHandle`). Keep the buffer open while any process has it mapped.
+- `IPCMemHandle.Bytes()` / `IPCMemHandleFromBytes(b)` convert the handle to and
+  from its raw 64 bytes for transport.
+- `func OpenIPCBuffer[T Supported](ctx *Context, h IPCMemHandle, n int) (*IPCBuffer[T], error)`
+  maps the exporter's allocation (`cuIpcOpenMemHandle`, lazy peer access). The
+  handle does not carry the size, so `n` must match what the exporter
+  allocated. Opening a handle in the process that exported it fails with
+  `ErrInvalidContext`; only plain `Alloc` memory is exportable.
+- `IPCBuffer[T]` copies like a `Buffer` (`CopyFrom`/`CopyTo`, `DevicePtr` for
+  `ArgDevicePtr`); `Close` unmaps this process's mapping
+  (`cuIpcCloseMemHandle`) and never frees the exporter's memory.
+- Events: create with `WithEventInterprocess()` (implies disabled timing),
+  export with `(*Event).IPCHandle()`, and import with
+  `OpenIPCEvent(ctx, h)`, which behaves like a timing-disabled `Event` for
+  cross-process ordering. A plain event returns `ErrEventNotInterprocess`, and
+  like the memory case the exporting event must stay open while any imported
+  reference is in use.
+
+The five IPC symbols are bound best-effort (`ErrSymbolUnavailable` on drivers
+without them), and support varies by platform; the calls return the driver's
+error where unsupported.
+
 ## memory pools
 
 `MemoryPool` is a handle to a device's stream-ordered memory pool, the allocator
@@ -1190,6 +1228,7 @@ Go-side sentinels:
 - `ErrUnsupportedElement`: `AllocArray2D` was called with an 8-byte element type, which CUDA arrays do not support.
 - `ErrNilSurface` / `ErrSurfaceClosed`: a method was called on a nil or closed `*Surface`, or a closed surface was passed to `ArgSurface`.
 - `ErrNoSurfaceStore`: `NewSurface` was given an array allocated without `WithSurfaceStore`.
+- `ErrEventNotInterprocess`: `Event.IPCHandle` was called on an event created without `WithEventInterprocess`.
 
 Returned CUDA errors for codes outside the table still match with:
 

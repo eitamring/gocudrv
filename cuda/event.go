@@ -14,6 +14,7 @@ const (
 	eventDefault       uint32 = 0
 	eventBlockingSync  uint32 = 1
 	eventDisableTiming uint32 = 2
+	eventInterprocess  uint32 = 4
 )
 
 // waitEventDefault matches CUDA's CU_EVENT_WAIT_DEFAULT flag.
@@ -46,6 +47,15 @@ func WithEventBlockingSync() EventOption {
 	})
 }
 
+// WithEventInterprocess creates the event for sharing across processes with
+// Event.IPCHandle. CUDA requires such events to disable timing, so this option
+// implies WithEventDisableTiming.
+func WithEventInterprocess() EventOption {
+	return eventOptionFunc(func(opts *eventOptions) {
+		opts.flags |= eventInterprocess | eventDisableTiming
+	})
+}
+
 // WithEventDisableTiming disables timestamp recording for the event. Use this
 // for events that only order stream work and will not be passed to Elapsed.
 func WithEventDisableTiming() EventOption {
@@ -66,6 +76,7 @@ type Event struct {
 	opMu           sync.RWMutex
 	closed         bool
 	timingDisabled bool
+	interprocess   bool
 }
 
 // NewEvent creates a CUDA event owned by the context. Close the returned event
@@ -96,7 +107,7 @@ func (c *Context) NewEvent(options ...EventOption) (*Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Event{ctx: c, raw: raw, timingDisabled: opts.flags&eventDisableTiming != 0}, nil
+	return &Event{ctx: c, raw: raw, timingDisabled: opts.flags&eventDisableTiming != 0, interprocess: opts.flags&eventInterprocess != 0}, nil
 }
 
 // Record enqueues this event into stream. Work later submitted to the same

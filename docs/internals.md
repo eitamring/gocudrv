@@ -230,6 +230,17 @@ driver lacks the symbol):
 | `cuMemAddressFree` | `CuMemAddressFree` | virtual memory | CUDA 10.2 |
 | `cuMemRelease` | `CuMemRelease` | virtual memory | CUDA 10.2 |
 | `cuLaunchCooperativeKernel` | `CuLaunchCooperativeKernel` | cooperative launch | CUDA 9.0 |
+| `cuIpcGetMemHandle` | `CuIpcGetMemHandle` | ipc | CUDA 4.1 |
+| `cuIpcOpenMemHandle_v2` | `CuIpcOpenMemHandle` | ipc | CUDA 11.0 |
+| `cuIpcCloseMemHandle` | `CuIpcCloseMemHandle` | ipc | CUDA 4.1 |
+| `cuIpcGetEventHandle` | `CuIpcGetEventHandle` | ipc | CUDA 4.1 |
+| `cuIpcOpenEventHandle` | `CuIpcOpenEventHandle` | ipc | CUDA 4.1 |
+
+The two `cuIpcOpen*` entry points take their 64-byte handle by value. On SysV
+targets the struct passes on the stack directly; on windows, where the ABI
+passes large aggregates by reference and the FFI layer does not marshal struct
+values, they are bound with the pointer signature the ABI actually uses and
+adapted to the same `Driver` field type.
 
 ### minimum practical driver version
 
