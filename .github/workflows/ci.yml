@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: test
@@ -24,6 +28,11 @@ jobs:
       - name: verify modules
         run: go mod verify
 
+      - name: check go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
       - name: vet
         run: |
           go vet ./...
@@ -31,6 +40,13 @@ jobs:
 
       - name: build with cgo off
         run: CGO_ENABLED=0 go build ./...
+
+      - name: cross-compile supported platforms
+        run: |
+          GOOS=windows go build ./...
+          GOOS=windows go vet ./...
+          GOOS=darwin GOARCH=arm64 go build ./...
+          GOOS=darwin GOARCH=arm64 go vet ./...
 
       - name: test with race and coverage
         run: go test -v -race -count=1 -coverprofile=coverage.out ./...
@@ -59,3 +75,19 @@ jobs:
         with:
           version: v2.8.0
           only-new-issues: true
+
+  vulncheck:
+    name: vulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: true
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
