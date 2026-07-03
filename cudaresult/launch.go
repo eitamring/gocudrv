@@ -59,3 +59,17 @@ func LaunchCooperativeKernel(
 		kernelParams,
 	))
 }
+
+// LaunchHostFunc enqueues a host function on stream: the driver calls fn (a
+// C-callable pointer) with userData once all preceding stream work completes.
+// It returns ErrSymbolUnavailable on a driver that does not export
+// cuLaunchHostFunc.
+func LaunchHostFunc(d *cudasys.Driver, stream cudasys.CUstream, fn, userData uintptr) error {
+	if d == nil {
+		return ErrNotInitialized
+	}
+	if d.CuLaunchHostFunc == nil {
+		return ErrSymbolUnavailable
+	}
+	return check("cuLaunchHostFunc", d.CuLaunchHostFunc(stream, fn, userData))
+}

@@ -50,6 +50,7 @@ var (
 	ErrNilSurface            = errors.New("cuda: nil surface")
 	ErrSurfaceClosed         = errors.New("cuda: surface is closed")
 	ErrNoSurfaceStore        = errors.New("cuda: array was not allocated with surface store")
+	ErrNilHostFunc           = errors.New("cuda: nil host function")
 	ErrEventNotInterprocess  = errors.New("cuda: event was not created with WithEventInterprocess")
 )
 

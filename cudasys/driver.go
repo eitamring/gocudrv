@@ -85,6 +85,7 @@ type Driver struct {
 	CuEventElapsedTime          func(ms *float32, start CUevent, end CUevent) CUresult
 	CuLaunchKernel              func(fn CUfunction, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemBytes uint32, stream CUstream, kernelParams *unsafe.Pointer, extra *unsafe.Pointer) CUresult
 	CuLaunchCooperativeKernel   func(fn CUfunction, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemBytes uint32, stream CUstream, kernelParams *unsafe.Pointer) CUresult
+	CuLaunchHostFunc            func(stream CUstream, fn uintptr, userData uintptr) CUresult
 	CuIpcGetMemHandle           func(pHandle *CUipcMemHandle, dptr CUdeviceptr) CUresult
 	CuIpcOpenMemHandle          func(pdptr *CUdeviceptr, handle CUipcMemHandle, flags uint32) CUresult
 	CuIpcCloseMemHandle         func(dptr CUdeviceptr) CUresult
@@ -263,6 +264,7 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuCtxDisablePeerAccess, "cuCtxDisablePeerAccess"},
 		{&d.CuMemcpyPeer, "cuMemcpyPeer"},
 		{&d.CuLaunchCooperativeKernel, "cuLaunchCooperativeKernel"},
+		{&d.CuLaunchHostFunc, "cuLaunchHostFunc"},
 		{&d.CuIpcGetMemHandle, "cuIpcGetMemHandle"},
 		{&d.CuIpcCloseMemHandle, "cuIpcCloseMemHandle"},
 		{&d.CuIpcGetEventHandle, "cuIpcGetEventHandle"},

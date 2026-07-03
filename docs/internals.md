@@ -230,11 +230,19 @@ driver lacks the symbol):
 | `cuMemAddressFree` | `CuMemAddressFree` | virtual memory | CUDA 10.2 |
 | `cuMemRelease` | `CuMemRelease` | virtual memory | CUDA 10.2 |
 | `cuLaunchCooperativeKernel` | `CuLaunchCooperativeKernel` | cooperative launch | CUDA 9.0 |
+| `cuLaunchHostFunc` | `CuLaunchHostFunc` | host functions | CUDA 10.0 |
 | `cuIpcGetMemHandle` | `CuIpcGetMemHandle` | ipc | CUDA 4.1 |
 | `cuIpcOpenMemHandle_v2` | `CuIpcOpenMemHandle` | ipc | CUDA 11.0 |
 | `cuIpcCloseMemHandle` | `CuIpcCloseMemHandle` | ipc | CUDA 4.1 |
 | `cuIpcGetEventHandle` | `CuIpcGetEventHandle` | ipc | CUDA 4.1 |
 | `cuIpcOpenEventHandle` | `CuIpcOpenEventHandle` | ipc | CUDA 4.1 |
+
+`cuLaunchHostFunc` needs a C-callable pointer the driver can invoke from its
+own thread. `internal/hostcb` mints exactly one such trampoline for the whole
+process (foreign callback pointers can never be released) and dispatches
+through a registry keyed by the user-data word, so each enqueued Go closure
+runs once and is dropped; panics inside a callback are swallowed because the
+calling thread is not a Go thread.
 
 The two `cuIpcOpen*` entry points take their 64-byte handle by value. On SysV
 targets the struct passes on the stack directly; on windows, where the ABI
