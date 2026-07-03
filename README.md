@@ -52,7 +52,7 @@ buffers through the raw handle accessors; see
 
 - NVIDIA GPU with a working driver
 - Linux, WSL2, or Windows
-- Go 1.22+
+- Go 1.24+
 - precompiled PTX if you want to launch kernels
 
 CUDA headers and the CUDA toolkit are not required to build this package.
