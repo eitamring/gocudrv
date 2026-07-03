@@ -194,6 +194,11 @@ var expectedOptionalOrder = []string{
 	"cuCtxDisablePeerAccess",
 	"cuMemcpyPeer",
 	"cuLaunchCooperativeKernel",
+	"cuIpcGetMemHandle",
+	"cuIpcCloseMemHandle",
+	"cuIpcGetEventHandle",
+	"cuIpcOpenMemHandle_v2",
+	"cuIpcOpenEventHandle",
 }
 
 func TestLoadBindsExpectedSymbolsInOrder(t *testing.T) {

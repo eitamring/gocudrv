@@ -85,6 +85,11 @@ type Driver struct {
 	CuEventElapsedTime          func(ms *float32, start CUevent, end CUevent) CUresult
 	CuLaunchKernel              func(fn CUfunction, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemBytes uint32, stream CUstream, kernelParams *unsafe.Pointer, extra *unsafe.Pointer) CUresult
 	CuLaunchCooperativeKernel   func(fn CUfunction, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemBytes uint32, stream CUstream, kernelParams *unsafe.Pointer) CUresult
+	CuIpcGetMemHandle           func(pHandle *CUipcMemHandle, dptr CUdeviceptr) CUresult
+	CuIpcOpenMemHandle          func(pdptr *CUdeviceptr, handle CUipcMemHandle, flags uint32) CUresult
+	CuIpcCloseMemHandle         func(dptr CUdeviceptr) CUresult
+	CuIpcGetEventHandle         func(pHandle *CUipcEventHandle, event CUevent) CUresult
+	CuIpcOpenEventHandle        func(phEvent *CUevent, handle CUipcEventHandle) CUresult
 
 	CuOccupancyMaxActiveBlocksPerMultiprocessor func(numBlocks *int32, fn CUfunction, blockSize int32, dynamicSMemSize uint64) CUresult
 	CuOccupancyMaxPotentialBlockSize            func(minGridSize *int32, blockSize *int32, fn CUfunction, blockSizeToDynamicSMemSize uintptr, dynamicSMemSize uint64, blockSizeLimit int32) CUresult
@@ -258,6 +263,9 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuCtxDisablePeerAccess, "cuCtxDisablePeerAccess"},
 		{&d.CuMemcpyPeer, "cuMemcpyPeer"},
 		{&d.CuLaunchCooperativeKernel, "cuLaunchCooperativeKernel"},
+		{&d.CuIpcGetMemHandle, "cuIpcGetMemHandle"},
+		{&d.CuIpcCloseMemHandle, "cuIpcCloseMemHandle"},
+		{&d.CuIpcGetEventHandle, "cuIpcGetEventHandle"},
 	}
 	for _, b := range required {
 		if err := bindFn(lib, b.fn, b.name); err != nil {
@@ -270,6 +278,7 @@ func Load(lib dynload.Library) (*Driver, error) {
 		// wrapper for that call reports ErrSymbolUnavailable.
 		_ = bindFn(lib, b.fn, b.name)
 	}
+	bindByValueIPC(lib, d)
 	return d, nil
 }
 
