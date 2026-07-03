@@ -7,7 +7,7 @@ CUDA toolkit, CUDA headers, cgo, or a C compiler.
 
 - NVIDIA GPU with a working driver
 - Linux, WSL2, or Windows
-- Go 1.22+
+- Go 1.24+
 - Precompiled PTX if you want to launch kernels
 
 ## WSL2
