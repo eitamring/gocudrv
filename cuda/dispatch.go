@@ -73,13 +73,20 @@ func (o *memOp) Run() error {
 
 var memOpPool = sync.Pool{New: func() any { return new(memOp) }}
 
-// run submits o to the context executor (wait semantics) and returns it to the
-// pool. doJob only returns after the executor is done with o, so recycling here
-// is safe.
+// recycle clears the host pointer so a pooled op does not keep the caller's
+// buffer reachable, then returns o to the pool. Unexported on purpose: an
+// exported Recycle would opt the op into worker-side recycling and double-Put.
+func (o *memOp) recycle() {
+	o.host = nil
+	memOpPool.Put(o)
+}
+
+// run submits o to the context executor (wait semantics) and recycles it. doJob
+// only returns after the executor is done with o, so recycling here is safe.
 func (c *Context) run(ctx context.Context, o *memOp) error {
 	o.driver = c.driver
 	err := c.doJob(ctx, o)
-	memOpPool.Put(o)
+	o.recycle()
 	return err
 }
 
@@ -262,11 +269,19 @@ func (o *launchOp) Run() error {
 
 var launchOpPool = sync.Pool{New: func() any { return new(launchOp) }}
 
+// recycle clears the packed parameter pointer so a pooled op does not keep the
+// argument array reachable, then returns o to the pool. Unexported on purpose:
+// an exported Recycle would opt the op into worker-side recycling and double-Put.
+func (o *launchOp) recycle() {
+	o.params = nil
+	launchOpPool.Put(o)
+}
+
 func (c *Context) launchKernel(ctx context.Context, fn cudasys.CUfunction, cfg LaunchConfig, stream cudasys.CUstream, params *unsafe.Pointer, cooperative bool) error {
 	o := launchOpPool.Get().(*launchOp)
 	o.driver, o.fn, o.cfg, o.stream, o.params, o.coop = c.driver, fn, cfg, stream, params, cooperative
 	err := c.doJob(ctx, o)
-	launchOpPool.Put(o)
+	o.recycle()
 	return err
 }
 
