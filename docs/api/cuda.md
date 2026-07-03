@@ -971,6 +971,30 @@ if int(cfg.GridX) <= maxBlocks {
   `DeviceAttributeCooperativeLaunch` reports whether the device supports
   cooperative launch at all.
 
+## host functions on streams
+
+`(*Stream).LaunchHostFunc(fn func()) error` enqueues a Go function into the
+stream's order (`cuLaunchHostFunc`): the driver calls it on an internal thread
+once all preceding stream work completes, and later stream work waits for it
+to return.
+
+```go
+buf.CopyFromHostAsync(ctx, stream, host)
+stream.LaunchHostFunc(func() { close(uploaded) })   // fires when the copy is done
+fn.LaunchOn(ctx, stream, cfg, cuda.Arg(buf))
+```
+
+Rules: `fn` must not call back into CUDA and must not block on work from the
+same stream (the stream is stalled until it returns); keep it short - signal a
+channel and get out. Calling a gocudrv method from `fn` can deadlock
+structurally: the call queues a task to the context's pinned executor, and if
+that executor is itself waiting on this stream, the driver thread and the
+pinned thread wait on each other forever. Panics inside `fn` are reported to
+stderr and swallowed (the caller is not a Go thread). If the context is
+destroyed while host functions are still queued they may never run, and their
+closures are retained for the life of the process. A nil fn returns
+`ErrNilHostFunc`; a driver without the symbol returns `ErrSymbolUnavailable`.
+
 ## occupancy
 
 Occupancy is how many of a multiprocessor's warp slots a kernel can fill. These
@@ -1226,6 +1250,7 @@ Go-side sentinels:
 - `ErrNilArray` / `ErrArrayClosed`: a method was called on a nil or closed `*Array2D[T]`.
 - `ErrNilTexture` / `ErrTextureClosed`: a method was called on a nil or closed `*Texture`, or a closed texture was passed to `ArgTexture`.
 - `ErrUnsupportedElement`: `AllocArray2D` was called with an 8-byte element type, which CUDA arrays do not support.
+- `ErrNilHostFunc`: `Stream.LaunchHostFunc` was given a nil function.
 - `ErrNilSurface` / `ErrSurfaceClosed`: a method was called on a nil or closed `*Surface`, or a closed surface was passed to `ArgSurface`.
 - `ErrNoSurfaceStore`: `NewSurface` was given an array allocated without `WithSurfaceStore`.
 - `ErrEventNotInterprocess`: `Event.IPCHandle` was called on an event created without `WithEventInterprocess`.

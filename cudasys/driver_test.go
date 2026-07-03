@@ -194,6 +194,7 @@ var expectedOptionalOrder = []string{
 	"cuCtxDisablePeerAccess",
 	"cuMemcpyPeer",
 	"cuLaunchCooperativeKernel",
+	"cuLaunchHostFunc",
 	"cuIpcGetMemHandle",
 	"cuIpcCloseMemHandle",
 	"cuIpcGetEventHandle",
