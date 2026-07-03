@@ -122,9 +122,7 @@ func (e *Event) Record(stream *Stream) error {
 	if stream.ctx != e.ctx {
 		return ErrContextMismatch
 	}
-	return e.ctx.doWait(context.Background(), func() error {
-		return cudaresult.EventRecord(e.ctx.driver, e.raw, stream.raw)
-	})
+	return e.ctx.doJob(context.Background(), newSyncOp(e.ctx.driver, opEventRecord, stream.raw, e.raw, 0))
 }
 
 // Synchronize waits until the event has completed or ctx is canceled.
@@ -139,9 +137,7 @@ func (e *Event) Synchronize(ctx context.Context) error {
 	if e.closed {
 		return ErrEventClosed
 	}
-	return e.ctx.do(ctx, func() error {
-		return cudaresult.EventSynchronize(e.ctx.driver, e.raw)
-	})
+	return e.ctx.doJobCtx(ctx, newSyncOp(e.ctx.driver, opEventSync, 0, e.raw, 0))
 }
 
 // Query reports whether the event has completed. It returns nil when the event
@@ -156,9 +152,7 @@ func (e *Event) Query() error {
 	if e.closed {
 		return ErrEventClosed
 	}
-	return e.ctx.doWait(context.Background(), func() error {
-		return cudaresult.EventQuery(e.ctx.driver, e.raw)
-	})
+	return e.ctx.doJob(context.Background(), newSyncOp(e.ctx.driver, opEventQuery, 0, e.raw, 0))
 }
 
 // Elapsed returns the GPU time between this event and end. Both events must be

@@ -856,6 +856,9 @@ if err := stream.Synchronize(context.Background()); err != nil {
   `ErrNilKernelArg` / `ErrInvalidArgSize`.
 - `(*Function).Launch(ctx, cfg, args...)` submits the launch on the legacy
   default stream. Invalid zero dimensions return `ErrInvalidLaunchConfig`.
+  Each call boxes its arguments (a few small allocations); for a loop that
+  launches every iteration, prefer `Pack` + `LaunchPacked` below, which
+  allocate nothing per launch.
 - `(*Function).LaunchOn(ctx, stream, cfg, args...)` submits on `stream`.
   Nil, closed, or cross-context streams are rejected before submission.
 

@@ -126,9 +126,7 @@ func (s *Stream) Synchronize(ctx context.Context) error {
 	if s.closed {
 		return ErrStreamClosed
 	}
-	return s.ctx.do(ctx, func() error {
-		return cudaresult.StreamSynchronize(s.ctx.driver, s.raw)
-	})
+	return s.ctx.doJobCtx(ctx, newSyncOp(s.ctx.driver, opStreamSync, s.raw, 0, 0))
 }
 
 // Query reports whether all work submitted to the stream has completed, without
@@ -144,9 +142,7 @@ func (s *Stream) Query() error {
 	if s.closed {
 		return ErrStreamClosed
 	}
-	return s.ctx.do(context.Background(), func() error {
-		return cudaresult.StreamQuery(s.ctx.driver, s.raw)
-	})
+	return s.ctx.doJob(context.Background(), newSyncOp(s.ctx.driver, opStreamQuery, s.raw, 0, 0))
 }
 
 // WaitEvent enqueues a dependency in stream. Work submitted to stream after
@@ -181,9 +177,7 @@ func (s *Stream) WaitEvent(event *Event, options ...WaitOption) error {
 	if s.ctx != event.ctx {
 		return ErrContextMismatch
 	}
-	return s.ctx.doWait(context.Background(), func() error {
-		return cudaresult.StreamWaitEvent(s.ctx.driver, s.raw, event.raw, opts.flags)
-	})
+	return s.ctx.doJob(context.Background(), newSyncOp(s.ctx.driver, opStreamWaitEvent, s.raw, event.raw, opts.flags))
 }
 
 // Close destroys the stream. Idempotent after a successful destroy; failures

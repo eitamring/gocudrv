@@ -131,9 +131,7 @@ func (b *PitchedBuffer[T]) CopyFrom(ctx context.Context, src []T) error {
 		WidthInBytes:  widthBytes,
 		Height:        uint64(b.height),
 	}
-	e := b.ctx.doWait(ctx, func() error {
-		return cudaresult.Memcpy2D(b.ctx.driver, &desc)
-	})
+	e := b.ctx.memcpy2D(ctx, &desc)
 	runtime.KeepAlive(src)
 	return e
 }
@@ -167,9 +165,7 @@ func (b *PitchedBuffer[T]) CopyTo(ctx context.Context, dst []T) error {
 		WidthInBytes:  widthBytes,
 		Height:        uint64(b.height),
 	}
-	e := b.ctx.doWait(ctx, func() error {
-		return cudaresult.Memcpy2D(b.ctx.driver, &desc)
-	})
+	e := b.ctx.memcpy2D(ctx, &desc)
 	runtime.KeepAlive(dst)
 	return e
 }
@@ -209,9 +205,7 @@ func (b *PitchedBuffer[T]) CopyToDevice(ctx context.Context, dst *PitchedBuffer[
 		WidthInBytes:  widthBytes,
 		Height:        uint64(b.height),
 	}
-	return b.ctx.doWait(ctx, func() error {
-		return cudaresult.Memcpy2D(b.ctx.driver, &desc)
-	})
+	return b.ctx.memcpy2D(ctx, &desc)
 }
 
 // Close frees the pitched allocation with cuMemFree. Idempotent; a failed free
