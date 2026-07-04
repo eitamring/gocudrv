@@ -815,8 +815,9 @@ if err != nil {
   loads with JIT options via `cuModuleLoadDataEx` and returns the driver's info
   and error logs. The returned `JITLog.Error` is filled even when the load
   fails, so a PTX compile error surfaces useful diagnostics. `JITOptions` carries
-  `LogBufferBytes` (log buffer size, default when `<= 0`) and `MaxRegisters`
-  (`CU_JIT_MAX_REGISTERS`, `0` leaves the driver default). The simple
+  `LogBufferBytes` (log buffer size, zero for the default; negative or over-cap
+  values are rejected) and `MaxRegisters` (`CU_JIT_MAX_REGISTERS`, `0` leaves
+  the driver default; values over `math.MaxUint32` are rejected). The simple
   `LoadModule` is unchanged.
 - `(*Module).Function(name string) (*Function, error)` looks up a kernel.
   The name is converted to a null-terminated byte sequence before being
@@ -837,6 +838,57 @@ executor and returns `ErrContextClosed`. Pair every `LoadModule` with
 `defer mod.Close()` and close every module before the context. A
 `Function` is tied to its `Module`: once `Module.Close` succeeds the
 handle is invalid.
+
+## JIT linking
+
+`Linker` is a JIT link session that combines PTX and cubin inputs into a
+single cubin image via `cuLink`, so separately compiled pieces can be linked
+at runtime and then loaded like any other module. Like the other handle
+types it is owned by a `Context` and locks its operations against a
+concurrent `Close`.
+
+```go
+lk, err := ctx.NewLinker(cuda.JITOptions{})
+if err != nil {
+    log.Fatal(err)
+}
+defer lk.Close()
+
+if err := lk.AddPTX("vector_add.ptx", ptx); err != nil {
+    log.Fatalf("%v: %s", err, lk.Log().Error)
+}
+image, err := lk.Complete()
+if err != nil {
+    log.Fatalf("%v: %s", err, lk.Log().Error)
+}
+mod, err := ctx.LoadModule(image)
+```
+
+- `(*Context).NewLinker(opts JITOptions) (*Linker, error)` starts a link
+  session. `JITOptions` is the same type `LoadModuleEx` uses: `LogBufferBytes`
+  sizes the info and error log buffers (zero for the default; negative or
+  over-cap values are rejected with `ErrInvalidLength`) and `MaxRegisters` caps
+  registers per thread when `> 0` (values over `math.MaxUint32` are rejected
+  with `ErrInvalidValue`). The driver retains the log buffers for the whole life of the link
+  state, so they live on the `Linker` until `Close`.
+- `(*Linker).AddPTX(name string, ptx []byte) error` adds a PTX input labelled
+  `name` (empty is unlabelled). The image is null-terminated and its length is
+  passed including the terminator, which the driver's PTX parser requires.
+- `(*Linker).AddCubin(name string, cubin []byte) error` adds a cubin input
+  with its exact bytes. Empty input is rejected with `ErrEmptyImage`.
+- `(*Linker).Complete() ([]byte, error)` finishes the link and returns a fresh
+  copy of the resulting cubin, ready for `LoadModule`. The driver owns the
+  underlying buffer and frees it at `Close`, so the copy is taken before
+  `Close` can run.
+- `(*Linker).Log() JITLog` returns the info and error logs the driver produced,
+  so a failed `AddPTX` or `Complete` keeps its diagnostics. A nil or
+  never-created `Linker` returns the zero `JITLog`.
+- `(*Linker).Close() error` destroys the session and the cubin buffer it owns.
+  Idempotent after a successful destroy and safe on a nil receiver.
+
+`cuLink` is a best-effort feature group (v2 entry points, CUDA 6.5+); a driver
+missing any of its symbols makes `NewLinker` return `ErrSymbolUnavailable`. Add every input before calling
+`Complete`, and close the `Linker` before its owning `Context`.
 
 ## kernel launch
 

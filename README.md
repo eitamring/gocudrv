@@ -10,8 +10,8 @@ device-to-device copy, free/total query), buffer subrange (offset) copies,
 non-owning buffer views, host memory registration, pitched 2D allocation and
 copies, memory pool access, non-blocking stream polling, module JIT options and
 logs, raw and unsafe kernel arguments, occupancy helpers, device global access, CUDA graph capture, replay, and update, stream-ordered async allocation,
-device diagnostics (PCI bus id, UUID, and more attributes), and raw handle
-accessors for sibling-module integration.
+JIT linking (cuLink), device diagnostics (PCI bus id, UUID, and more attributes),
+and raw handle accessors for sibling-module integration.
 
 ## What it is
 

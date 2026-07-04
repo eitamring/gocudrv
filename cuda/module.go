@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"runtime"
 	"strings"
@@ -90,11 +91,11 @@ func trimNull(b []byte) string {
 // JITOptions tunes a JIT compile in LoadModuleEx. The zero value requests info
 // and error logs at a default buffer size with no other tuning.
 type JITOptions struct {
-	// LogBufferBytes is the size of each of the info and error log buffers. A
-	// value <= 0 uses a default size.
+	// LogBufferBytes is the size of each of the info and error log buffers. Zero
+	// uses a default size; negative or over-cap values are rejected.
 	LogBufferBytes int
 	// MaxRegisters caps registers per thread (CU_JIT_MAX_REGISTERS). 0 leaves it
-	// at the driver default.
+	// at the driver default; values over math.MaxUint32 are rejected.
 	MaxRegisters int
 }
 
@@ -136,6 +137,9 @@ func (c *Context) LoadModuleEx(image []byte, opts JITOptions) (*Module, JITLog, 
 	}
 	if size == 0 {
 		size = defaultJITLogBytes
+	}
+	if int64(opts.MaxRegisters) > math.MaxUint32 {
+		return nil, JITLog{}, ErrInvalidValue
 	}
 	buf := nullTerminated(image)
 

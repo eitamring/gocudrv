@@ -15,4 +15,5 @@ type (
 	CUgraph     uintptr
 	CUgraphExec uintptr
 	CUgraphNode uintptr
+	CUlinkState uintptr
 )

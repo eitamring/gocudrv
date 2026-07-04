@@ -236,6 +236,10 @@ driver lacks the symbol):
 | `cuIpcCloseMemHandle` | `CuIpcCloseMemHandle` | ipc | CUDA 4.1 |
 | `cuIpcGetEventHandle` | `CuIpcGetEventHandle` | ipc | CUDA 4.1 |
 | `cuIpcOpenEventHandle` | `CuIpcOpenEventHandle` | ipc | CUDA 4.1 |
+| `cuLinkCreate_v2` | `CuLinkCreate` | JIT linker | CUDA 6.5 |
+| `cuLinkAddData_v2` | `CuLinkAddData` | JIT linker | CUDA 6.5 |
+| `cuLinkComplete` | `CuLinkComplete` | JIT linker | CUDA 6.5 |
+| `cuLinkDestroy` | `CuLinkDestroy` | JIT linker | CUDA 6.5 |
 
 `cuLaunchHostFunc` needs a C-callable pointer the driver can invoke from its
 own thread. `internal/hostcb` mints exactly one such trampoline for the whole

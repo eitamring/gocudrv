@@ -1024,3 +1024,135 @@ func TestRealModuleJITLog(t *testing.T) {
 		t.Logf("JIT error log: %s", log.Error)
 	}
 }
+
+func TestRealLinkerVectorAdd(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+
+	ptx, err := os.ReadFile("testdata/vector_add.ptx")
+	if err != nil {
+		t.Fatalf("read ptx: %v", err)
+	}
+
+	lk, err := ctx.NewLinker(JITOptions{})
+	if errors.Is(err, ErrSymbolUnavailable) {
+		t.Skip("JIT linker not supported on this driver")
+	}
+	if err != nil {
+		t.Fatalf("NewLinker: %v", err)
+	}
+	t.Cleanup(func() { _ = lk.Close() })
+
+	if err := lk.AddPTX("vector_add.ptx", ptx); err != nil {
+		t.Fatalf("AddPTX: %v (log: %s)", err, lk.Log().Error)
+	}
+	image, err := lk.Complete()
+	if err != nil {
+		t.Fatalf("Complete: %v (log: %s)", err, lk.Log().Error)
+	}
+	if len(image) == 0 {
+		t.Fatal("linked image is empty")
+	}
+
+	mod, err := ctx.LoadModule(image)
+	if err != nil {
+		t.Fatalf("LoadModule: %v", err)
+	}
+	t.Cleanup(func() { _ = mod.Close() })
+	fn, err := mod.Function("vector_add")
+	if err != nil {
+		t.Fatalf("Function: %v", err)
+	}
+
+	const n = 64
+	aHost := make([]float32, n)
+	bHost := make([]float32, n)
+	for i := range aHost {
+		aHost[i] = float32(i)
+		bHost[i] = float32(i) * 2
+	}
+	a, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc a: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+	b, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc b: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	out, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc out: %v", err)
+	}
+	t.Cleanup(func() { _ = out.Close() })
+
+	bg := context.Background()
+	if err := a.CopyFrom(bg, aHost); err != nil {
+		t.Fatalf("CopyFrom a: %v", err)
+	}
+	if err := b.CopyFrom(bg, bHost); err != nil {
+		t.Fatalf("CopyFrom b: %v", err)
+	}
+	if err := fn.Launch(bg, LaunchConfig1D(n, 64), Arg(a), Arg(b), Arg(out), ArgValue(int32(n))); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := ctx.Synchronize(bg); err != nil {
+		t.Fatalf("Synchronize: %v", err)
+	}
+	got := make([]float32, n)
+	if err := out.CopyTo(bg, got); err != nil {
+		t.Fatalf("CopyTo out: %v", err)
+	}
+	for i := range got {
+		if want := aHost[i] + bHost[i]; got[i] != want {
+			t.Fatalf("out[%d] = %v, want %v", i, got[i], want)
+		}
+	}
+	t.Logf("linked vector_add from PTX and launched for %d elements", n)
+}
+
+// TestRealLinkerBadPTX feeds the linker malformed PTX, which the driver rejects
+// at AddData or, if it defers, at Complete; either way the error log must fill.
+func TestRealLinkerBadPTX(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+
+	lk, err := ctx.NewLinker(JITOptions{})
+	if errors.Is(err, ErrSymbolUnavailable) {
+		t.Skip("JIT linker not supported on this driver")
+	}
+	if err != nil {
+		t.Fatalf("NewLinker: %v", err)
+	}
+	t.Cleanup(func() { _ = lk.Close() })
+
+	err = lk.AddPTX("bad.ptx", []byte(".version 99.9\ngarbage"))
+	if err == nil {
+		_, err = lk.Complete()
+	}
+	if err == nil {
+		t.Fatal("expected a link error for malformed PTX")
+	}
+	if lk.Log().Error == "" {
+		t.Error("expected a non-empty error log on link failure")
+	} else {
+		t.Logf("JIT link error log: %s", lk.Log().Error)
+	}
+}
