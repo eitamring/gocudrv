@@ -3,6 +3,7 @@
 package dynload
 
 import (
+	"runtime"
 	"syscall"
 	"unsafe"
 )
@@ -34,6 +35,7 @@ func (winOpener) Open(path string) (Library, error) {
 		return nil, err
 	}
 	h, _, callErr := procLoadLibraryExW.Call(uintptr(unsafe.Pointer(p)), 0, loadLibrarySearchSystem32)
+	runtime.KeepAlive(p)
 	if h == 0 {
 		return nil, callErr
 	}
