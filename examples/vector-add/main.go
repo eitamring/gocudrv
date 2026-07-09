@@ -45,8 +45,7 @@ func main() {
 
 // addCleanupErr folds err from a deferred cleanup into the operational
 // error. When both are non-nil the result joins them so the caller sees
-// both the original failure and the cleanup failure rather than only
-// one. This is the pattern the SDK expects from production code.
+// both the original failure and the cleanup failure rather than only one.
 func addCleanupErr(prev error, op string, err error) error {
 	if err == nil {
 		return prev
