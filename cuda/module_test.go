@@ -2,6 +2,7 @@ package cuda
 
 import (
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -708,6 +709,9 @@ func TestLoadModuleExRejects(t *testing.T) {
 	}
 	if _, _, err := ctx.LoadModuleEx([]byte("x"), JITOptions{LogBufferBytes: maxJITLogBytes + 1}); !errors.Is(err, ErrInvalidLength) {
 		t.Errorf("oversized log buffer = %v, want ErrInvalidLength", err)
+	}
+	if _, _, err := ctx.LoadModuleEx([]byte("x"), JITOptions{MaxRegisters: math.MaxUint32 + 1}); !errors.Is(err, ErrInvalidValue) {
+		t.Errorf("overflowing max registers = %v, want ErrInvalidValue", err)
 	}
 }
 

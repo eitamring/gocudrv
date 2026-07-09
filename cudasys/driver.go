@@ -71,6 +71,10 @@ type Driver struct {
 	CuModuleUnload              func(module CUmodule) CUresult
 	CuModuleGetFunction         func(fn *CUfunction, module CUmodule, name *byte) CUresult
 	CuModuleGetGlobal           func(dptr *CUdeviceptr, bytes *uint64, module CUmodule, name *byte) CUresult
+	CuLinkCreate                func(numOptions uint32, options *int32, optionValues *uintptr, stateOut *CUlinkState) CUresult
+	CuLinkAddData               func(state CUlinkState, inputType uint32, data *byte, size uint64, name *byte, numOptions uint32, options *int32, optionValues *uintptr) CUresult
+	CuLinkComplete              func(state CUlinkState, cubinOut *unsafe.Pointer, sizeOut *uint64) CUresult
+	CuLinkDestroy               func(state CUlinkState) CUresult
 	CuStreamCreate              func(stream *CUstream, flags uint32) CUresult
 	CuStreamCreateWithPriority  func(stream *CUstream, flags uint32, priority int32) CUresult
 	CuStreamDestroy             func(stream CUstream) CUresult
@@ -268,6 +272,11 @@ func Load(lib dynload.Library) (*Driver, error) {
 		{&d.CuIpcGetMemHandle, "cuIpcGetMemHandle"},
 		{&d.CuIpcCloseMemHandle, "cuIpcCloseMemHandle"},
 		{&d.CuIpcGetEventHandle, "cuIpcGetEventHandle"},
+		// JIT linker (v2 entry points, CUDA 6.5+)
+		{&d.CuLinkCreate, "cuLinkCreate_v2"},
+		{&d.CuLinkAddData, "cuLinkAddData_v2"},
+		{&d.CuLinkComplete, "cuLinkComplete"},
+		{&d.CuLinkDestroy, "cuLinkDestroy"},
 	}
 	for _, b := range required {
 		if err := bindFn(lib, b.fn, b.name); err != nil {

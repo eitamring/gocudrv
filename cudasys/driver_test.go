@@ -198,6 +198,10 @@ var expectedOptionalOrder = []string{
 	"cuIpcGetMemHandle",
 	"cuIpcCloseMemHandle",
 	"cuIpcGetEventHandle",
+	"cuLinkCreate_v2",
+	"cuLinkAddData_v2",
+	"cuLinkComplete",
+	"cuLinkDestroy",
 	"cuIpcOpenMemHandle_v2",
 	"cuIpcOpenEventHandle",
 }
