@@ -3,8 +3,8 @@
 package platform
 
 // LibraryCandidates returns the paths to try when loading the CUDA driver
-// library on windows. nvcuda.dll is resolved via the standard DLL search
-// order.
+// library on windows. The dynload opener resolves the bare name from
+// System32 only, where the NVIDIA driver installs nvcuda.dll.
 func LibraryCandidates() []string {
 	return []string{"nvcuda.dll"}
 }

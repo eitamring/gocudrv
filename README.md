@@ -3,7 +3,9 @@
 Pure-Go bindings for the NVIDIA CUDA Driver API. No cgo. The driver library is
 loaded dynamically at runtime.
 
-Status: very early. The current API covers initialization, device discovery,
+Status: the core Driver API surface is in place and tested. Unit tests run
+without a GPU (CGO_ENABLED=0), and the API is not yet frozen. The current API
+covers initialization, device discovery,
 primary contexts, memory, module loading, kernel launch, explicit streams,
 events, async pinned copies, device memory primitives (memset, typed fill,
 device-to-device copy, free/total query), buffer subrange (offset) copies,
