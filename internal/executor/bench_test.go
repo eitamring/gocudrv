@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"runtime"
 	"testing"
 )
 
@@ -21,6 +22,12 @@ func BenchmarkRoundTripJob(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func BenchmarkRoundTripJobOneP(b *testing.B) {
+	previous := runtime.GOMAXPROCS(1)
+	b.Cleanup(func() { runtime.GOMAXPROCS(previous) })
+	BenchmarkRoundTripJob(b)
 }
 
 func BenchmarkRoundTripClosure(b *testing.B) {

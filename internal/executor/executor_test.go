@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -151,6 +152,15 @@ func TestDoCtxCanceledBeforeSubmit(t *testing.T) {
 	}
 }
 
+func TestDoCtxNilContext(t *testing.T) {
+	e := New()
+	t.Cleanup(func() { _ = e.Close() })
+
+	if err := e.DoCtx(nil, func() error { return nil }); err != nil { //nolint:staticcheck // Nil is part of the executor contract.
+		t.Fatalf("DoCtx with nil context: %v", err)
+	}
+}
+
 func TestDoCtxCanceledMidExecution(t *testing.T) {
 	e := New()
 	t.Cleanup(func() { _ = e.Close() })
@@ -294,6 +304,212 @@ func TestDoCtxCancelDuringSpin(t *testing.T) {
 		t.Fatal("DoCtx hung")
 	}
 	close(gate)
+}
+
+func TestSpinYieldCadence(t *testing.T) {
+	for _, tc := range []struct {
+		procs int
+		want  int
+	}{
+		{0, 1},
+		{1, 1},
+		{2, multiPSpinYieldEvery},
+		{8, multiPSpinYieldEvery},
+	} {
+		if got := spinYieldEveryFor(tc.procs); got != tc.want {
+			t.Errorf("spinYieldEveryFor(%d) = %d, want %d", tc.procs, got, tc.want)
+		}
+	}
+
+	cases := []struct {
+		spins int
+		want  bool
+	}{
+		{0, false},
+		{1, false},
+		{multiPSpinYieldEvery - 1, false},
+		{multiPSpinYieldEvery, true},
+		{multiPSpinYieldEvery + 1, false},
+		{2 * multiPSpinYieldEvery, true},
+		{callerSpin, true},
+	}
+	for _, tc := range cases {
+		if got := shouldYield(tc.spins, multiPSpinYieldEvery); got != tc.want {
+			t.Errorf("shouldYield(%d) = %v, want %v", tc.spins, got, tc.want)
+		}
+	}
+}
+
+func testCompletion() *completion {
+	return &completion{result: make(chan error, 1)}
+}
+
+func TestCompletionOwnershipOrder(t *testing.T) {
+	boom := errors.New("boom")
+	t.Run("delivery before receive", func(t *testing.T) {
+		c := testCompletion()
+		c.result <- boom
+		if c.delivered() {
+			t.Fatal("worker claimed a completion still owned by the receiver")
+		}
+		if err := <-c.result; !errors.Is(err, boom) {
+			t.Fatalf("result = %v, want boom", err)
+		}
+		if !c.received() {
+			t.Fatal("receiver did not claim delivered completion")
+		}
+	})
+
+	t.Run("receive before delivery state", func(t *testing.T) {
+		c := testCompletion()
+		c.result <- boom
+		if err := <-c.result; !errors.Is(err, boom) {
+			t.Fatalf("result = %v, want boom", err)
+		}
+		if c.received() {
+			t.Fatal("receiver claimed completion before worker published delivery")
+		}
+		if !c.delivered() {
+			t.Fatal("worker did not claim completion after early receive")
+		}
+	})
+
+	t.Run("abandon before send", func(t *testing.T) {
+		c := testCompletion()
+		if c.abandon() {
+			t.Fatal("caller claimed completion before delivery")
+		}
+		c.result <- boom
+		if !c.delivered() {
+			t.Fatal("worker did not claim abandoned completion")
+		}
+		if len(c.result) != 0 {
+			t.Fatal("abandoned result was not drained")
+		}
+	})
+
+	t.Run("abandon after send before delivery state", func(t *testing.T) {
+		c := testCompletion()
+		c.result <- boom
+		if c.abandon() {
+			t.Fatal("caller claimed completion before delivery was published")
+		}
+		if !c.delivered() {
+			t.Fatal("worker did not claim completion abandoned after send")
+		}
+		if len(c.result) != 0 {
+			t.Fatal("abandoned result was not drained")
+		}
+	})
+
+	t.Run("delivery before abandon", func(t *testing.T) {
+		c := testCompletion()
+		c.result <- boom
+		if c.delivered() {
+			t.Fatal("worker claimed completion before caller abandoned it")
+		}
+		if !c.abandon() {
+			t.Fatal("caller did not claim delivered completion")
+		}
+		if len(c.result) != 0 {
+			t.Fatal("abandoned result was not drained")
+		}
+	})
+}
+
+func assertOneCompletionOwner(t *testing.T, owners <-chan bool) {
+	t.Helper()
+	claimed := 0
+	for i := 0; i < 2; i++ {
+		if <-owners {
+			claimed++
+		}
+	}
+	if claimed != 1 {
+		t.Fatalf("completion owners = %d, want 1", claimed)
+	}
+}
+
+func TestCompletionReceiveRace(t *testing.T) {
+	const attempts = 1000
+	for i := 0; i < attempts; i++ {
+		c := testCompletion()
+		owners := make(chan bool, 2)
+		start := make(chan struct{})
+		go func() {
+			<-start
+			c.result <- nil
+			runtime.Gosched()
+			owners <- c.delivered()
+		}()
+		go func() {
+			<-start
+			<-c.result
+			runtime.Gosched()
+			owners <- c.received()
+		}()
+		close(start)
+		assertOneCompletionOwner(t, owners)
+		if len(c.result) != 0 {
+			t.Fatalf("attempt %d left a result buffered", i)
+		}
+	}
+}
+
+func TestCompletionAbandonRace(t *testing.T) {
+	const attempts = 1000
+	for i := 0; i < attempts; i++ {
+		c := testCompletion()
+		owners := make(chan bool, 2)
+		start := make(chan struct{})
+		go func() {
+			<-start
+			c.result <- nil
+			runtime.Gosched()
+			owners <- c.delivered()
+		}()
+		go func() {
+			<-start
+			runtime.Gosched()
+			owners <- c.abandon()
+		}()
+		close(start)
+		assertOneCompletionOwner(t, owners)
+		if len(c.result) != 0 {
+			t.Fatalf("attempt %d left a result buffered", i)
+		}
+	}
+}
+
+func TestAbandonedCompletionRecycled(t *testing.T) {
+	e := New()
+	t.Cleanup(func() { _ = e.Close() })
+	started := make(chan struct{})
+	finish := make(chan struct{})
+	res, err := e.submit(context.Background(), funcJob(func() error {
+		close(started)
+		<-finish
+		return nil
+	}))
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	<-started
+	if res.abandon() {
+		t.Fatal("caller claimed completion before delivery")
+	}
+	close(finish)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for completionState(res.state.Load()) != completionWaiting && time.Now().Before(deadline) {
+		runtime.Gosched()
+	}
+	if got := completionState(res.state.Load()); got != completionWaiting {
+		t.Fatalf("completion state = %d, want waiting after recycle", got)
+	}
+	if len(res.result) != 0 {
+		t.Fatal("recycled completion still holds a result")
+	}
 }
 
 type recJob struct {
