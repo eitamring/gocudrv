@@ -102,6 +102,22 @@ func (b *PitchedBuffer[T]) elements() (int, error) {
 	return b.width * b.height, nil
 }
 
+func lockPitchedPair[T Supported](a, b *PitchedBuffer[T]) func() {
+	first, second := a, b
+	if uintptr(unsafe.Pointer(first)) > uintptr(unsafe.Pointer(second)) {
+		first, second = second, first
+	}
+	first.opMu.RLock()
+	if first == second {
+		return first.opMu.RUnlock
+	}
+	second.opMu.RLock()
+	return func() {
+		second.opMu.RUnlock()
+		first.opMu.RUnlock()
+	}
+}
+
 // CopyFrom copies a packed host slice of Width*Height elements into the pitched
 // buffer, padding each row to the pitch. len(src) must equal Width*Height.
 func (b *PitchedBuffer[T]) CopyFrom(ctx context.Context, src []T) error {
@@ -176,17 +192,10 @@ func (b *PitchedBuffer[T]) CopyToDevice(ctx context.Context, dst *PitchedBuffer[
 	if b == nil || dst == nil {
 		return ErrNilBuffer
 	}
-	b.opMu.RLock()
-	defer b.opMu.RUnlock()
-	if b.closed {
+	unlock := lockPitchedPair(b, dst)
+	defer unlock()
+	if b.closed || dst.closed {
 		return ErrBufferClosed
-	}
-	if dst != b {
-		dst.opMu.RLock()
-		defer dst.opMu.RUnlock()
-		if dst.closed {
-			return ErrBufferClosed
-		}
 	}
 	if dst.ctx != b.ctx {
 		return ErrContextMismatch

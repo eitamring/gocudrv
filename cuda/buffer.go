@@ -243,62 +243,81 @@ func (b *Buffer[T]) CopyTo(ctx context.Context, dst []T) error {
 	return err
 }
 
-// CopyFromHost copies len(src) elements from a pinned HostBuffer into the
-// device buffer. Unlike CopyFrom with a raw []T, this method holds the
-// host buffer's read lock for the duration of the copy, so the pinned
-// memory cannot be freed by HostBuffer.Close while CUDA is reading it.
-// Prefer this method when the source is pinned.
-func (b *Buffer[T]) CopyFromHost(ctx context.Context, src *HostBuffer[T]) error {
-	if b == nil || src == nil {
+// CopyFromHost copies a pinned host buffer into the device buffer. It holds
+// the host memory's read lock for the duration of the copy so it cannot be
+// released while CUDA is reading it.
+func (b *Buffer[T]) CopyFromHost(ctx context.Context, src PinnedHost[T]) error {
+	if b == nil {
 		return ErrNilBuffer
+	}
+	host, err := pinnedHostRefOf(src)
+	if err != nil {
+		return err
 	}
 	b.opMu.RLock()
 	defer b.opMu.RUnlock()
 	if b.closed {
 		return ErrBufferClosed
 	}
-	src.opMu.RLock()
-	defer src.opMu.RUnlock()
-	if src.closed {
+	host.lock.RLock()
+	defer host.lock.RUnlock()
+	if *host.closed {
 		return ErrBufferClosed
 	}
-	if src.length != b.length {
+	if host.ctx != b.ctx {
+		return ErrContextMismatch
+	}
+	if host.length != b.length {
 		return ErrLengthMismatch
 	}
-	return b.ctx.memcpyHtoD(ctx, b.ptr, src.ptr, b.bytes)
+	err = b.ctx.memcpyHtoD(ctx, b.ptr, host.ptr, b.bytes)
+	runtime.KeepAlive(host.owner)
+	return err
 }
 
-// CopyToHost copies b.Len() elements from the device buffer into a pinned
-// HostBuffer. Holds the host buffer's read lock for the duration of the
-// copy so HostBuffer.Close cannot free the pinned memory while CUDA is
-// writing to it. Prefer this method when the destination is pinned.
-func (b *Buffer[T]) CopyToHost(ctx context.Context, dst *HostBuffer[T]) error {
-	if b == nil || dst == nil {
+// CopyToHost copies the device buffer into pinned host memory. It holds the
+// host memory's read lock for the duration of the copy so it cannot be
+// released while CUDA is writing to it.
+func (b *Buffer[T]) CopyToHost(ctx context.Context, dst PinnedHost[T]) error {
+	if b == nil {
 		return ErrNilBuffer
+	}
+	host, err := pinnedHostRefOf(dst)
+	if err != nil {
+		return err
 	}
 	b.opMu.RLock()
 	defer b.opMu.RUnlock()
 	if b.closed {
 		return ErrBufferClosed
 	}
-	dst.opMu.RLock()
-	defer dst.opMu.RUnlock()
-	if dst.closed {
+	host.lock.RLock()
+	defer host.lock.RUnlock()
+	if *host.closed {
 		return ErrBufferClosed
 	}
-	if dst.length != b.length {
+	if host.ctx != b.ctx {
+		return ErrContextMismatch
+	}
+	if host.length != b.length {
 		return ErrLengthMismatch
 	}
-	return b.ctx.memcpyDtoH(ctx, dst.ptr, b.ptr, b.bytes)
+	err = b.ctx.memcpyDtoH(ctx, host.ptr, b.ptr, b.bytes)
+	runtime.KeepAlive(host.owner)
+	return err
 }
 
-// CopyFromHostAsync enqueues a copy from a pinned HostBuffer into the device
-// buffer on stream. It returns after CUDA accepts the work, not after the GPU
-// copy finishes. The caller must not mutate src or close src, b, or stream
-// until stream.Synchronize confirms the copy is done.
-func (b *Buffer[T]) CopyFromHostAsync(ctx context.Context, stream *Stream, src *HostBuffer[T]) error {
-	if b == nil || src == nil {
+// CopyFromHostAsync enqueues a copy from pinned host memory into the device
+// buffer on stream. It returns after CUDA accepts the work. The pinned memory
+// must not be read, mutated, or closed until stream.Synchronize confirms the
+// copy is done. The buffer and stream must also remain open until then.
+func (b *Buffer[T]) CopyFromHostAsync(ctx context.Context, stream *Stream, src PinnedHost[T]) error {
+	if b == nil {
 		return ErrNilBuffer
+	}
+	host, err := pinnedHostRefOf(src)
+	if err != nil {
+		return err
 	}
 	if stream == nil {
 		return ErrNilStream
@@ -313,27 +332,33 @@ func (b *Buffer[T]) CopyFromHostAsync(ctx context.Context, stream *Stream, src *
 	if b.closed {
 		return ErrBufferClosed
 	}
-	src.opMu.RLock()
-	defer src.opMu.RUnlock()
-	if src.closed {
+	host.lock.RLock()
+	defer host.lock.RUnlock()
+	if *host.closed {
 		return ErrBufferClosed
 	}
-	if stream.ctx != b.ctx || src.ctx != b.ctx {
+	if stream.ctx != b.ctx || host.ctx != b.ctx {
 		return ErrContextMismatch
 	}
-	if src.length != b.length {
+	if host.length != b.length {
 		return ErrLengthMismatch
 	}
-	return b.ctx.memcpyHtoDAsync(ctx, b.ptr, src.ptr, b.bytes, stream.raw)
+	err = b.ctx.memcpyHtoDAsync(ctx, b.ptr, host.ptr, b.bytes, stream.raw)
+	runtime.KeepAlive(host.owner)
+	return err
 }
 
-// CopyToHostAsync enqueues a copy from the device buffer into a pinned
-// HostBuffer on stream. It returns after CUDA accepts the work, not after the
-// GPU copy finishes. The caller must not read dst or close dst, b, or stream
-// until stream.Synchronize confirms the copy is done.
-func (b *Buffer[T]) CopyToHostAsync(ctx context.Context, stream *Stream, dst *HostBuffer[T]) error {
-	if b == nil || dst == nil {
+// CopyToHostAsync enqueues a copy from the device buffer into pinned host
+// memory on stream. It returns after CUDA accepts the work. The pinned memory
+// must not be read, mutated, or closed until stream.Synchronize confirms the
+// copy is done. The buffer and stream must also remain open until then.
+func (b *Buffer[T]) CopyToHostAsync(ctx context.Context, stream *Stream, dst PinnedHost[T]) error {
+	if b == nil {
 		return ErrNilBuffer
+	}
+	host, err := pinnedHostRefOf(dst)
+	if err != nil {
+		return err
 	}
 	if stream == nil {
 		return ErrNilStream
@@ -348,18 +373,20 @@ func (b *Buffer[T]) CopyToHostAsync(ctx context.Context, stream *Stream, dst *Ho
 	if b.closed {
 		return ErrBufferClosed
 	}
-	dst.opMu.RLock()
-	defer dst.opMu.RUnlock()
-	if dst.closed {
+	host.lock.RLock()
+	defer host.lock.RUnlock()
+	if *host.closed {
 		return ErrBufferClosed
 	}
-	if stream.ctx != b.ctx || dst.ctx != b.ctx {
+	if stream.ctx != b.ctx || host.ctx != b.ctx {
 		return ErrContextMismatch
 	}
-	if dst.length != b.length {
+	if host.length != b.length {
 		return ErrLengthMismatch
 	}
-	return b.ctx.memcpyDtoHAsync(ctx, dst.ptr, b.ptr, b.bytes, stream.raw)
+	err = b.ctx.memcpyDtoHAsync(ctx, host.ptr, b.ptr, b.bytes, stream.raw)
+	runtime.KeepAlive(host.owner)
+	return err
 }
 
 // Zero sets every byte of the buffer to zero. Blocks until the memset

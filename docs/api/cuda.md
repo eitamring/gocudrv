@@ -97,9 +97,10 @@ Pass `cuda.DeviceAttribute(value)` for CUDA attributes not yet named.
 
 ## contexts
 
-A `Context` wraps the device's primary context and a pinned-thread executor.
-Every driver call that needs context affinity routes through that thread so
-"current context" stays stable across goroutines.
+A `Context` wraps the device's primary context and a pinned command executor.
+Synchronization calls use a second executor created on first use, so a long
+GPU wait does not stop queries, launches, or copy submissions. Both executors
+bind the same context on their pinned threads.
 
 ```go
 dev, _ := cuda.GetDevice(0)
@@ -115,7 +116,8 @@ if err := ctx.Synchronize(context.Background()); err != nil {
 ```
 
 - `(*Device).Primary() (*Context, error)` retains the primary context and
-  starts the executor. Rolls back retain and stops the executor on failure.
+  starts the command executor. Rolls back retain and stops the executor on
+  failure. The synchronization executor starts lazily.
 - `(*Context).Device() *Device` returns the device this context was created
   on.
 - `(*Context).StreamPriorityRange() (least, greatest int, err error)` returns
@@ -124,13 +126,14 @@ if err := ctx.Synchronize(context.Background()); err != nil {
   support return `(0, 0)`.
 - `(*Context).Synchronize(ctx context.Context) error` blocks until all
   preceding GPU work finishes or `ctx` is canceled. Canceling stops the
-  wait; the GPU work continues regardless.
+  caller's wait; the GPU work and underlying driver wait continue regardless.
 - `(*Context).MemInfo() (free, total uint64, err error)` returns the free and
   total device memory in bytes. The values reflect the whole device, not just
   this context.
-- `(*Context).Close() error` releases the primary-context retain and stops
-  the executor. Idempotent; subsequent calls return the first call's error.
-  Methods called after `Close` return `ErrContextClosed`.
+- `(*Context).Close() error` drains both executors and releases the
+  primary-context retain. It is idempotent after success. A failed release
+  leaves the context open and retryable. Methods called after a successful
+  `Close` return `ErrContextClosed`.
 
 Nil `*Context` methods return `ErrNilContext` when they return an error, and
 `Device` returns nil.
@@ -138,7 +141,8 @@ Nil `*Context` methods return `ErrNilContext` when they return an error, and
 `Primary` and `Close` do not take a `context.Context`: they mutate
 ownership state and partial completion would leak retain counts. Methods
 that only wait (`Synchronize` and stream synchronization) take
-`context.Context`.
+`context.Context`. Canceling a wait does not occupy the command executor, but
+resource cleanup still waits for the accepted driver wait to finish.
 
 ## memory
 
@@ -194,18 +198,23 @@ if err := buf.CopyTo(bg, dst); err != nil {
   to device. Lengths must match.
 - `(*Buffer[T]).CopyTo(ctx context.Context, dst []T) error` copies device
   to host. Same shape.
-- `(*Buffer[T]).CopyFromHost(ctx context.Context, src *HostBuffer[T]) error`
-  copies from a pinned `HostBuffer`. Holds the host buffer's read lock for
-  the duration of the copy so `HostBuffer.Close` cannot free the pinned
-  memory while CUDA is still reading. Prefer this over `CopyFrom` with
-  `host.Slice()` when the source is pinned.
-- `(*Buffer[T]).CopyToHost(ctx context.Context, dst *HostBuffer[T]) error`
-  copies to a pinned `HostBuffer`. Same lock-holding guarantee. Prefer
-  over `CopyTo` with `host.Slice()` when the destination is pinned.
-- `(*Buffer[T]).CopyFromHostAsync(ctx context.Context, stream *Stream, src *HostBuffer[T]) error`
+- `(*Buffer[T]).CopyFromHost(ctx context.Context, src PinnedHost[T]) error`
+  copies from an allocated or registered pinned host region. It holds the
+  host region's read lock through the driver call so it cannot be closed while
+  CUDA is reading.
+- `(*Buffer[T]).CopyToHost(ctx context.Context, dst PinnedHost[T]) error`
+  copies to an allocated or registered pinned host region with the same lock
+  guarantee.
+- `(*Buffer[T]).CopyFromHostAsync(ctx context.Context, stream *Stream, src PinnedHost[T]) error`
   enqueues a pinned host-to-device copy on `stream`.
-- `(*Buffer[T]).CopyToHostAsync(ctx context.Context, stream *Stream, dst *HostBuffer[T]) error`
+- `(*Buffer[T]).CopyToHostAsync(ctx context.Context, stream *Stream, dst PinnedHost[T]) error`
   enqueues a device-to-pinned-host copy on `stream`.
+
+Compatibility note: these four methods previously accepted `*HostBuffer[T]`.
+Ordinary calls with a host buffer still compile, but the exact method types
+changed. Stored method values and interfaces using the old signatures must use
+`PinnedHost[T]` instead.
+
 - `(*Buffer[T]).Zero(ctx context.Context) error` sets every byte of the buffer
   to zero and blocks until the memset completes.
 - `(*Buffer[T]).ZeroAsync(ctx context.Context, stream *Stream) error` enqueues
@@ -316,11 +325,10 @@ An error returned after submission may come from the driver while accepting the
 work. Treat the stream as needing normal error handling; a later
 `Stream.Synchronize` may also report CUDA work failure.
 
-**Async lifetime rule:** after `CopyFromHostAsync`, do not mutate the source
-`HostBuffer` and do not close the source, destination, or stream until
-`Stream.Synchronize` confirms the copy is done. After `CopyToHostAsync`, do not
-read the destination `HostBuffer` and do not close the source, destination, or
-stream until synchronization completes.
+**Async lifetime rule:** after `CopyFromHostAsync`, do not mutate or close the
+source `PinnedHost`, destination, or stream until `Stream.Synchronize` confirms
+the copy is done. After `CopyToHostAsync`, do not read or close the destination
+`PinnedHost`, source, or stream until synchronization completes.
 
 **Lifetime rule:** a `Buffer` must be closed before its owning `Context`
 is closed. After the `Context` is closed, `Buffer.Close` cannot reach the
@@ -330,6 +338,12 @@ cannot guarantee that ordering. Pair every `Alloc` with `defer buf.Close()`
 and close every buffer before the context.
 
 ## pinned host memory
+
+`PinnedHost[T]` is the sealed interface shared by `HostBuffer[T]` and
+`RegisteredHost[T]`. It exposes `Slice`, `Len`, and `Bytes`, and lets the typed
+copy APIs accept either kind while retaining the correct context, lock, and
+lifetime checks. Callers outside the package cannot implement it with pageable
+memory.
 
 `HostBuffer[T]` is a typed handle to a region of page-locked (pinned)
 host memory owned by a `Context`. CUDA can DMA directly to and from this
@@ -373,12 +387,11 @@ if err := buf.CopyFromHost(context.Background(), host); err != nil {
 The slice returned by `Slice` becomes invalid after `Close`. Do not retain
 it past that point; using it after `Close` reads or writes freed memory.
 
-Use `Buffer.CopyFromHost` / `CopyToHost` to move data between a `Buffer`
-and a `HostBuffer`. They lock the host buffer against concurrent `Close`
-for the duration of the copy. `Buffer.CopyFrom` / `CopyTo` with
-`host.Slice()` still work for CPU-only access patterns, but they cannot
-prevent another goroutine from closing the `HostBuffer` mid-copy, so the
-typed methods are the safe path for CUDA transfers.
+Use `Buffer.CopyFromHost` / `CopyToHost` to move data between a `Buffer` and
+either `PinnedHost` implementation. They lock the host region against
+concurrent `Close` for the duration of the driver call. `Buffer.CopyFrom` /
+`CopyTo` with `host.Slice()` still work for CPU-only access patterns, but they
+cannot prevent another goroutine from closing the host region mid-copy.
 
 ### registered host memory
 
@@ -391,7 +404,7 @@ behavior without reallocating, `RegisterHost` page-locks it in place via
   page-locks the backing memory of `mem`. Rejects nil context and an empty
   slice, and returns `ErrSymbolUnavailable` on a driver without the symbol.
 - `(*RegisteredHost[T]).Slice()`, `Len()`, `Bytes()` report the registered
-  region; pass `Slice()` to `Buffer.CopyFrom` / `CopyTo`.
+  region. Pass the registration directly to the `*Host` copy methods.
 - `(*RegisteredHost[T]).Close()` unregisters. Idempotent; a failed unregister
   leaves it open to retry.
 
@@ -399,21 +412,23 @@ Unlike `AllocHost`, the caller owns the memory: keep the slice alive and
 unchanged until `Close`, and free it only after unregistering. Close the
 registration before its `Context`.
 
-Use `Buffer.CopyFromHostAsync` / `CopyToHostAsync` with an explicit `Stream`
-when you want to enqueue copies that can overlap with other stream work. These
-methods are pinned-buffer only. There is intentionally no
+Use the async `*Host` methods with an explicit `Stream` when you want copies
+that can overlap with other stream work. They accept either allocated or
+registered pinned memory. There is intentionally no
 `CopyFromAsync(ctx, stream, []T)` API: after an async enqueue returns, the GPU
 may still read or write the host memory, and a normal Go slice has no CUDA
 lifetime handle for this package to protect. Do not work around this with
-`unsafe.Pointer(&slice[0])`; use `AllocHost` for async transfers.
+`unsafe.Pointer(&slice[0])`; use `AllocHost` or `RegisterHost`.
 
 Pinned memory is an optional faster path, not a replacement. Pageable Go
 slices are still accepted by `Buffer.CopyFrom` / `CopyTo`. Use pinned
 memory for repeated large transfers and for async copies; for tiny
 one-off copies the pageable path is fine.
 
-Lifetime rule mirrors `Buffer`: a `HostBuffer` must be closed before its
-owning `Context` is closed.
+Lifetime rules mirror `Buffer`: close `HostBuffer` and `RegisteredHost` values
+before their owning `Context`. Async flat and shaped copies hold locks through
+driver submission only. Keep every participating host region, device resource,
+and stream open, and do not read or mutate host memory until synchronization.
 
 ## pitched memory
 
@@ -435,6 +450,10 @@ is the row stride in bytes, at least `Width*sizeof(T)`.
 - `(*PitchedBuffer[T]).CopyToDevice(ctx, dst *PitchedBuffer[T])` copies into
   another pitched buffer of equal `Width` and `Height` in the same context;
   their pitches may differ.
+- `CopyFromHostAsync(ctx, stream, src PinnedHost[T])` and
+  `CopyToHostAsync(ctx, stream, dst PinnedHost[T])` enqueue packed host copies.
+  `CopyToDeviceAsync(ctx, stream, dst)` enqueues the matching pitched
+  device-to-device copy. All shapes must match.
 - `(*PitchedBuffer[T]).Close()` frees with `cuMemFree`. Idempotent.
 
 The 2D copies use the `CUDA_MEMCPY2D` descriptor, so host rows are treated as
@@ -457,6 +476,9 @@ rows, so `Pitch` is the driver-chosen row stride shared by every slice.
 - `(*Volume[T]).CopyFrom(ctx, src []T)` and `CopyTo(ctx, dst []T)` move a packed
   host slice of `Width*Height*Depth` elements to and from the volume, adding and
   dropping the row padding (`cuMemcpy3D`). The slice length must match.
+- `CopyFromHostAsync(ctx, stream, src PinnedHost[T])` and
+  `CopyToHostAsync(ctx, stream, dst PinnedHost[T])` enqueue the same packed 3D
+  geometry with pinned memory.
 - `(*Volume[T]).Close()` frees with `cuMemFree`. Idempotent.
 
 The 3D copies use the `CUDA_MEMCPY3D` descriptor with the host side packed and
@@ -489,6 +511,9 @@ err = fn.Launch(context.Background(), cfg, cuda.ArgTexture(tex), cuda.ArgValue(i
   packed host slice of `Width*Height` elements to and from the array
   (`cuMemcpy2D` with an array endpoint). `Width()`, `Height()`, and `Raw()`
   report the geometry and the raw `CUarray` handle.
+- `CopyFromHostAsync(ctx, stream, src PinnedHost[T])` and
+  `CopyToHostAsync(ctx, stream, dst PinnedHost[T])` enqueue the same array
+  transfers with allocated or registered pinned memory.
 - `func NewTexture[T Supported](arr *Array2D[T], cfg TextureConfig) (*Texture, error)`
   creates a texture object over the array (`cuTexObjectCreate`).
   `TextureConfig` sets the `AddressMode` (`AddressWrap`/`Clamp`/`Mirror`/`Border`),
@@ -700,7 +725,8 @@ stream.
 
 Canceling `Stream.Synchronize` only stops the caller's wait. It does not stop
 the queued GPU work or the underlying CUDA synchronization already running on
-the executor thread; a later `Stream.Close` will still wait behind that work.
+the synchronization executor. Command submissions and queries on the context
+can continue, while a later `Stream.Close` still waits for that accepted wait.
 
 ### polling and timing
 
@@ -1037,15 +1063,13 @@ fn.LaunchOn(ctx, stream, cfg, cuda.Arg(buf))
 ```
 
 Rules: `fn` must not call back into CUDA and must not block on work from the
-same stream (the stream is stalled until it returns); keep it short - signal a
-channel and get out. Calling a gocudrv method from `fn` can deadlock
-structurally: the call queues a task to the context's pinned executor, and if
-that executor is itself waiting on this stream, the driver thread and the
-pinned thread wait on each other forever. Panics inside `fn` are reported to
-stderr and swallowed (the caller is not a Go thread). If the context is
-destroyed while host functions are still queued they may never run, and their
-closures are retained for the life of the process. A nil fn returns
-`ErrNilHostFunc`; a driver without the symbol returns `ErrSymbolUnavailable`.
+same stream. CUDA stalls the stream until it returns, and CUDA API calls from a
+host function can deadlock. Keep it short, signal a channel, and return. Panics
+inside `fn` are reported to stderr and swallowed because the caller is not a Go
+thread. If the context is destroyed while host functions are still queued they
+may never run, and their closures are retained for the life of the process. A
+nil fn returns `ErrNilHostFunc`; a driver without the symbol returns
+`ErrSymbolUnavailable`.
 
 ## occupancy
 
@@ -1270,8 +1294,9 @@ Go-side sentinels:
 - `ErrNilDevice`: a method was called on a nil `*Device`.
 - `ErrNilContext`: a method was called on a nil `*Context`.
 - `ErrContextClosed`: a method was called on a `*Context` after `Close`.
-- `ErrNilBuffer`: a method was called on a nil `*Buffer[T]` or nil `*HostBuffer[T]`.
-- `ErrBufferClosed`: a method was called on a `*Buffer[T]` or `*HostBuffer[T]` after `Close`.
+- `ErrNilBuffer`: a buffer method received a nil buffer or typed-nil
+  `PinnedHost[T]`.
+- `ErrBufferClosed`: a buffer or pinned host region was used after `Close`.
 - `ErrLengthMismatch`: a copy was given mismatched or empty slices/buffers.
 - `ErrInvalidLength`: `Alloc` or `AllocHost` was given a non-positive or overflowing element count, an offset copy was given a negative offset or non-positive count, or `LoadModuleEx` was given a log buffer size that is negative or larger than the cap.
 - `ErrOutOfRange`: an offset copy's range (offset plus count) does not fit the buffer.

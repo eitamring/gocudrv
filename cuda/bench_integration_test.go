@@ -118,6 +118,208 @@ func BenchmarkRealAsyncPinnedCopy(b *testing.B) {
 	b.ReportMetric(gpuUS/float64(b.N), "gpu-us/op")
 }
 
+const benchThroughputBytes = 64 << 20
+
+func reportRealGPUMetrics(b *testing.B, bytesPerOp int64, totalUS float64) {
+	if b.N == 0 || totalUS <= 0 {
+		return
+	}
+	b.ReportMetric(totalUS/float64(b.N), "gpu-us/op")
+	b.ReportMetric(float64(bytesPerOp)*float64(b.N)/(totalUS*1e3), "gpu-GB/s")
+}
+
+// BenchmarkRealCopyOverlap compares two opposite-direction copies serialized
+// on one stream with the same copies running on separate streams. Events on a
+// control stream measure the interval until both transfer streams finish.
+func BenchmarkRealCopyOverlap(b *testing.B) {
+	ctx := benchRealContext(b)
+	control, err := ctx.NewStream()
+	if err != nil {
+		b.Fatalf("NewStream control: %v", err)
+	}
+	b.Cleanup(func() { _ = control.Close() })
+	upload, err := ctx.NewStream()
+	if err != nil {
+		b.Fatalf("NewStream upload: %v", err)
+	}
+	b.Cleanup(func() { _ = upload.Close() })
+	download, err := ctx.NewStream()
+	if err != nil {
+		b.Fatalf("NewStream download: %v", err)
+	}
+	b.Cleanup(func() { _ = download.Close() })
+
+	uploadDevice, err := Alloc[uint8](ctx, benchThroughputBytes)
+	if err != nil {
+		b.Fatalf("Alloc upload: %v", err)
+	}
+	b.Cleanup(func() { _ = uploadDevice.Close() })
+	downloadDevice, err := Alloc[uint8](ctx, benchThroughputBytes)
+	if err != nil {
+		b.Fatalf("Alloc download: %v", err)
+	}
+	b.Cleanup(func() { _ = downloadDevice.Close() })
+	uploadHost, err := AllocHost[uint8](ctx, benchThroughputBytes)
+	if err != nil {
+		b.Fatalf("AllocHost upload: %v", err)
+	}
+	b.Cleanup(func() { _ = uploadHost.Close() })
+	downloadHost, err := AllocHost[uint8](ctx, benchThroughputBytes)
+	if err != nil {
+		b.Fatalf("AllocHost download: %v", err)
+	}
+	b.Cleanup(func() { _ = downloadHost.Close() })
+
+	start, err := ctx.NewEvent()
+	if err != nil {
+		b.Fatalf("NewEvent start: %v", err)
+	}
+	b.Cleanup(func() { _ = start.Close() })
+	uploadDone, err := ctx.NewEvent()
+	if err != nil {
+		b.Fatalf("NewEvent upload: %v", err)
+	}
+	b.Cleanup(func() { _ = uploadDone.Close() })
+	downloadDone, err := ctx.NewEvent()
+	if err != nil {
+		b.Fatalf("NewEvent download: %v", err)
+	}
+	b.Cleanup(func() { _ = downloadDone.Close() })
+	done, err := ctx.NewEvent()
+	if err != nil {
+		b.Fatalf("NewEvent done: %v", err)
+	}
+	b.Cleanup(func() { _ = done.Close() })
+
+	bg := context.Background()
+	bytesPerOp := int64(2 * benchThroughputBytes)
+	b.Run("serial", func(b *testing.B) {
+		b.SetBytes(bytesPerOp)
+		b.ResetTimer()
+		var gpuUS float64
+		for i := 0; i < b.N; i++ {
+			if err := start.Record(control); err != nil {
+				b.Fatal(err)
+			}
+			if err := uploadDevice.CopyFromHostAsync(bg, control, uploadHost); err != nil {
+				b.Fatal(err)
+			}
+			if err := downloadDevice.CopyToHostAsync(bg, control, downloadHost); err != nil {
+				b.Fatal(err)
+			}
+			if err := done.Record(control); err != nil {
+				b.Fatal(err)
+			}
+			if err := control.Synchronize(bg); err != nil {
+				b.Fatal(err)
+			}
+			d, err := start.Elapsed(done)
+			if err != nil {
+				b.Fatal(err)
+			}
+			gpuUS += float64(d) / float64(time.Microsecond)
+		}
+		reportRealGPUMetrics(b, bytesPerOp, gpuUS)
+	})
+	b.Run("parallel", func(b *testing.B) {
+		b.SetBytes(bytesPerOp)
+		b.ResetTimer()
+		var gpuUS float64
+		for i := 0; i < b.N; i++ {
+			if err := start.Record(control); err != nil {
+				b.Fatal(err)
+			}
+			if err := upload.WaitEvent(start); err != nil {
+				b.Fatal(err)
+			}
+			if err := download.WaitEvent(start); err != nil {
+				b.Fatal(err)
+			}
+			if err := uploadDevice.CopyFromHostAsync(bg, upload, uploadHost); err != nil {
+				b.Fatal(err)
+			}
+			if err := downloadDevice.CopyToHostAsync(bg, download, downloadHost); err != nil {
+				b.Fatal(err)
+			}
+			if err := uploadDone.Record(upload); err != nil {
+				b.Fatal(err)
+			}
+			if err := downloadDone.Record(download); err != nil {
+				b.Fatal(err)
+			}
+			if err := control.WaitEvent(uploadDone); err != nil {
+				b.Fatal(err)
+			}
+			if err := control.WaitEvent(downloadDone); err != nil {
+				b.Fatal(err)
+			}
+			if err := done.Record(control); err != nil {
+				b.Fatal(err)
+			}
+			if err := control.Synchronize(bg); err != nil {
+				b.Fatal(err)
+			}
+			d, err := start.Elapsed(done)
+			if err != nil {
+				b.Fatal(err)
+			}
+			gpuUS += float64(d) / float64(time.Microsecond)
+		}
+		reportRealGPUMetrics(b, bytesPerOp, gpuUS)
+	})
+}
+
+// BenchmarkRealMemsetThroughput measures an event-timed asynchronous device
+// memset over a 64 MiB byte buffer.
+func BenchmarkRealMemsetThroughput(b *testing.B) {
+	ctx := benchRealContext(b)
+	stream, err := ctx.NewStream()
+	if err != nil {
+		b.Fatalf("NewStream: %v", err)
+	}
+	b.Cleanup(func() { _ = stream.Close() })
+	buf, err := Alloc[uint8](ctx, benchThroughputBytes)
+	if err != nil {
+		b.Fatalf("Alloc: %v", err)
+	}
+	b.Cleanup(func() { _ = buf.Close() })
+	start, err := ctx.NewEvent()
+	if err != nil {
+		b.Fatalf("NewEvent start: %v", err)
+	}
+	b.Cleanup(func() { _ = start.Close() })
+	done, err := ctx.NewEvent()
+	if err != nil {
+		b.Fatalf("NewEvent done: %v", err)
+	}
+	b.Cleanup(func() { _ = done.Close() })
+
+	bg := context.Background()
+	b.SetBytes(benchThroughputBytes)
+	b.ResetTimer()
+	var gpuUS float64
+	for i := 0; i < b.N; i++ {
+		if err := start.Record(stream); err != nil {
+			b.Fatal(err)
+		}
+		if err := buf.ZeroAsync(bg, stream); err != nil {
+			b.Fatal(err)
+		}
+		if err := done.Record(stream); err != nil {
+			b.Fatal(err)
+		}
+		if err := stream.Synchronize(bg); err != nil {
+			b.Fatal(err)
+		}
+		d, err := start.Elapsed(done)
+		if err != nil {
+			b.Fatal(err)
+		}
+		gpuUS += float64(d) / float64(time.Microsecond)
+	}
+	reportRealGPUMetrics(b, benchThroughputBytes, gpuUS)
+}
+
 // BenchmarkRealSmallKernelE2E measures what a tiny kernel costs end to end:
 // copy a 256-byte input up, launch vector_add over 64 elements, copy the
 // 256-byte result back, all on one stream. Wall time per op includes the CPU

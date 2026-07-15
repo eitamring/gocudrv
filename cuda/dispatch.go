@@ -243,6 +243,60 @@ func (c *Context) memcpy3D(ctx context.Context, desc *cudasys.Memcpy3D) error {
 	return err
 }
 
+// memcpy2DAsyncOp carries an asynchronous 2D descriptor inline and is
+// recycled by its caller after the executor has submitted it.
+type memcpy2DAsyncOp struct {
+	driver *cudasys.Driver
+	desc   cudasys.Memcpy2D
+	stream cudasys.CUstream
+}
+
+func (o *memcpy2DAsyncOp) Run() error {
+	return cudaresult.Memcpy2DAsync(o.driver, &o.desc, o.stream)
+}
+
+func (o *memcpy2DAsyncOp) reset() {
+	*o = memcpy2DAsyncOp{}
+}
+
+var memcpy2DAsyncOpPool = sync.Pool{New: func() any { return new(memcpy2DAsyncOp) }}
+
+func (c *Context) memcpy2DAsync(ctx context.Context, desc *cudasys.Memcpy2D, stream cudasys.CUstream) error {
+	o := memcpy2DAsyncOpPool.Get().(*memcpy2DAsyncOp)
+	o.driver, o.desc, o.stream = c.driver, *desc, stream
+	err := c.doJob(ctx, o)
+	o.reset()
+	memcpy2DAsyncOpPool.Put(o)
+	return err
+}
+
+// memcpy3DAsyncOp carries an asynchronous 3D descriptor inline and is
+// recycled by its caller after the executor has submitted it.
+type memcpy3DAsyncOp struct {
+	driver *cudasys.Driver
+	desc   cudasys.Memcpy3D
+	stream cudasys.CUstream
+}
+
+func (o *memcpy3DAsyncOp) Run() error {
+	return cudaresult.Memcpy3DAsync(o.driver, &o.desc, o.stream)
+}
+
+func (o *memcpy3DAsyncOp) reset() {
+	*o = memcpy3DAsyncOp{}
+}
+
+var memcpy3DAsyncOpPool = sync.Pool{New: func() any { return new(memcpy3DAsyncOp) }}
+
+func (c *Context) memcpy3DAsync(ctx context.Context, desc *cudasys.Memcpy3D, stream cudasys.CUstream) error {
+	o := memcpy3DAsyncOpPool.Get().(*memcpy3DAsyncOp)
+	o.driver, o.desc, o.stream = c.driver, *desc, stream
+	err := c.doJob(ctx, o)
+	o.reset()
+	memcpy3DAsyncOpPool.Put(o)
+	return err
+}
+
 // launchOp is a pooled kernel-launch operation, submitted to the executor
 // without a per-launch closure.
 type launchOp struct {

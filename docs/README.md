@@ -1,8 +1,7 @@
 # docs
 
 This directory holds focused notes for the current API surface and project
-layout. The package is still early, so these pages describe what exists now
-rather than the full roadmap.
+layout.
 
 ## pages
 
@@ -22,10 +21,11 @@ rather than the full roadmap.
 ## package layout
 
 ```text
-cuda/          public Go API
-cudaresult/    CUresult-to-error helpers
-cudasys/       raw CUDA Driver API types and bound functions
-internal/      dynamic loader, platform paths, executor, arg packing
+cuda/          public API, tests, and benchmarks
+cudaresult/    CUDA result-to-error wrappers
+cudasys/       raw Driver API types and dynamic symbols
+internal/      loader, executor, arg packing, platform paths, and host callbacks
+docs/          guides, API reference, and internals
 examples/      runnable examples
 scripts/       build and check helpers
 ```
