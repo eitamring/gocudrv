@@ -282,9 +282,10 @@ CUDA's "current context" is per-OS-thread. Go goroutines move between OS
 threads, so a goroutine that called `cuCtxSetCurrent` cannot assume the
 context is still current the next time it issues a driver call.
 
-`internal/executor` solves this by owning one goroutine per `Context`,
-pinned to a single OS thread with `runtime.LockOSThread`. Every CUDA call
-that needs context affinity is submitted to that goroutine and runs there.
+`internal/executor` solves this with context-owned goroutines pinned to OS
+threads by `runtime.LockOSThread`. Each executor keeps the context current on
+its thread, and every CUDA call that needs context affinity runs through one of
+those executors.
 
 ```text
 caller goroutine -- exec.DoCtx(ctx, fn) --> task channel --> pinned thread
@@ -292,28 +293,39 @@ caller goroutine -- exec.DoCtx(ctx, fn) --> task channel --> pinned thread
                                                                  | runs fn
 ```
 
+Each `Context` starts one command executor. `Context.Synchronize`,
+`Stream.Synchronize`, and `Event.Synchronize` lazily start a second executor
+for blocking driver waits, with the same primary context current on both OS
+threads. Queries, launches, and copy submissions can therefore continue while
+a synchronization call waits for GPU work. Accepted waits are tracked until
+the driver call returns so resource teardown and `Context.Close` can drain and
+unbind the wait executor safely.
+
 Dispatch latency: waking a parked goroutine across the pinned thread is
 expensive (about 100 microseconds on WSL2, sub-microsecond when neither side
 parks), so both sides of the handoff spin for a bounded window before parking.
 The worker polls its task channel for a fixed number of iterations after each
-job, and the submitter polls the result the same way before blocking; a hot
-call loop completes in about a microsecond. The cost is bounded CPU burn: a
-busy context's executor holds its P for tens of microseconds after its last
-job (relevant with many contexts or `GOMAXPROCS=1`), and an idle executor
-parks and burns nothing. Accepted tasks are drained before the executor honors
-`Close`, so a task that reached the buffered channel always runs.
+job, and the submitter polls the result the same way before blocking. Both
+loops periodically yield to the Go scheduler, so the worker and caller can
+make progress when they share one P or CPU time is constrained. With multiple
+Ps, the yield is infrequent enough that a hot call loop normally completes
+before reaching it. With one P, every unsuccessful poll yields so the caller
+and worker can alternate. An idle executor parks and burns nothing. Accepted
+tasks are drained before the executor honors `Close`, so a task that reached
+the buffered channel always runs.
 
 When `Close` stops the goroutine, the thread is unlocked back to the Go
 scheduler rather than terminated: the CUDA driver keeps thread-local state, and
-terminating a thread that held it can crash the driver (observed on WSL2). The
-one exception is a context whose current-context unbind failed on close; its
-executor is retired so the unclean thread exits instead of hosting other
-goroutines.
+terminating a thread that held it can crash the driver (observed on WSL2). An
+executor whose current-context unbind fails is retired so the unclean thread
+exits instead of hosting other goroutines.
 
 `DoCtx` accepts a `context.Context`. Cancellation stops the wait, not the
 GPU work; the function still runs to completion on the executor thread and
 its result is discarded. The result channel is buffered so the worker does
-not block when the caller has walked away.
+not block when the caller has walked away. An atomic ownership handoff lets
+whichever side finishes second drain and recycle the channel, including after
+cancellation.
 
 Synchronous memory copies use a stricter executor path: cancellation can stop
 submission, but once a copy is submitted the caller waits until it finishes.
@@ -373,26 +385,24 @@ writes are zero-copy.
 Pinned memory matters because the CUDA driver can DMA between pinned host
 memory and the device without staging through a pageable bounce buffer.
 It is also recommended for `cuMemcpy*Async` to get predictable overlap
-and best throughput; pageable host regions are accepted by the async
-APIs in current drivers but the behavior is less predictable. The public async
-copy API therefore accepts `HostBuffer` only.
+and best throughput; pageable host regions are accepted by the async APIs in
+current drivers but the behavior is less predictable. Public async copy methods
+therefore accept page-locked handles rather than raw slices.
 
-`Buffer.CopyFromHost` and `Buffer.CopyToHost` hold the source/destination
-`HostBuffer`'s `sync.RWMutex` read lock across the executor call so
-`HostBuffer.Close` cannot race with an in-flight copy. The raw-slice
-copy methods (`CopyFrom` / `CopyTo` with `host.Slice()`) do not have this
-guarantee because the slice header carries no back-reference to the
-`HostBuffer`; the safe path uses the typed methods.
+Typed host copy methods hold the accepted host handle's `sync.RWMutex` read
+lock across the executor call so `Close` cannot race with an in-flight copy.
+The raw-slice copy methods do not have this guarantee because a slice header
+carries no back-reference to its page-locked owner; the safe path uses the
+typed methods.
 
 Both `cuMemAllocHost_v2` and `cuMemFreeHost` run on the context executor
 via the same strict `doWait` path used by `cuMemAlloc_v2` / `cuMemFree_v2`:
 cancellation can stop submission but not abandon an in-flight call.
 
-`Buffer.CopyFromHostAsync` and `Buffer.CopyToHostAsync` hold the stream,
-device-buffer, and host-buffer read locks while submitting the async copy.
-Those locks protect the enqueue call only. The caller must synchronize the
-stream before reading async copy results or closing resources touched by the
-queued copy.
+Async host copy methods hold the stream, device resource, and page-locked host
+handle read locks while submitting the copy. Those locks protect the enqueue
+call only. The caller must synchronize the stream before reading async copy
+results or closing resources touched by the queued copy.
 
 Events use the same resource pattern as streams: `Event.Close` takes the event
 write lock, while `Record`, `Query`, `Synchronize`, `Elapsed`, and
@@ -406,7 +416,7 @@ deadlock.
 because they enqueue ordering work and need the stream/event handles to remain
 valid until the driver accepts that work. `Event.Synchronize` is cancellable
 like stream synchronization: cancellation stops the caller's wait, not the GPU
-work or the underlying CUDA wait already running on the executor.
+work or the underlying CUDA wait already running on a context-owned executor.
 
 ## PTX null-termination
 
@@ -416,14 +426,12 @@ which the driver parses through its own header rather than relying on a
 terminator. PTX text produced by `nvcc -ptx` or hand-authored PTX often
 omits a trailing zero, so the wrapper makes it safe regardless of source.
 
-`Context.LoadModule` inspects the last byte of the caller's slice: if it
-is already `0`, the slice is passed through unchanged; otherwise the
-wrapper allocates a fresh `len(image)+1` buffer, copies the bytes, and
-lets the trailing zero serve as the terminator. This is harmless for
-binary cubin/fatbin images since the driver parses them by header. The
-caller's slice is never mutated. `runtime.KeepAlive` keeps the chosen
-buffer reachable across the executor call so the GC cannot reclaim it
-while the driver is still reading.
+`Context.LoadModule` reuses an input when it is already safe to pass and
+copies it when it must add a PTX terminator. The caller's slice is never
+mutated. Cubin and fatbin images are parsed by their headers rather than a
+C terminator. `runtime.KeepAlive` keeps the chosen buffer reachable across
+the executor call so the GC cannot reclaim it while the driver is still
+reading.
 
 `Module.Function` always allocates a `len(name)+1` byte buffer and copies
 the Go string into it so the trailing zero is guaranteed. Names

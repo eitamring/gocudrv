@@ -11,21 +11,26 @@ import (
 	"github.com/eitamring/gocudrv/internal/executor"
 )
 
-// Context wraps a CUDA primary context plus the pinned-thread executor that
-// keeps it current. Every driver call that needs context affinity routes
-// through the executor.
+// Context wraps a CUDA primary context plus a pinned command executor. Blocking
+// synchronization lazily creates a second pinned executor so ordinary commands
+// can continue while the caller waits for GPU work.
 type Context struct {
-	device *Device
-	driver *cudasys.Driver
-	raw    cudasys.CUcontext
-	exec   *executor.Executor
-	opMu   sync.RWMutex
-	closed atomic.Bool
+	device     *Device
+	driver     *cudasys.Driver
+	raw        cudasys.CUcontext
+	exec       *executor.Executor
+	syncMu     sync.Mutex
+	syncExec   *executor.Executor
+	syncActive atomic.Int64
+	commandErr error
+	opMu       sync.RWMutex
+	closed     atomic.Bool
 }
 
 // Primary retains the primary context on the device and binds it as the
-// current context on a dedicated pinned thread. The returned Context owns
-// the executor goroutine; call Close to release the context and stop it.
+// current context on a dedicated pinned command thread. The returned Context
+// owns that executor and any lazily created synchronization executor; call
+// Close to release the context and stop them.
 //
 // On failure all partial state (retained context, started executor) is
 // rolled back before returning.
@@ -77,7 +82,7 @@ func (c *Context) Device() *Device {
 // or ctx is canceled. Canceling ctx stops the wait; the GPU work continues
 // regardless. Pass context.Background() if no cancellation is needed.
 func (c *Context) Synchronize(ctx context.Context) error {
-	if c == nil || c.exec == nil {
+	if c == nil {
 		return ErrNilContext
 	}
 	return c.doJobCtx(ctx, newSyncOp(c.driver, opCtxSync, 0, 0, 0))
@@ -127,9 +132,7 @@ func (c *Context) MemInfo() (free, total uint64, err error) {
 	return free, total, nil
 }
 
-// do runs fn on the context's executor with cancellation. Internal entry
-// point for future memory, module, stream, and launch code so every CUDA
-// call that needs context affinity routes through the same pinned thread.
+// do runs fn on the context's pinned command executor with cancellation.
 func (c *Context) do(ctx context.Context, fn func() error) error {
 	return c.doWith(ctx, fn, false)
 }
@@ -138,11 +141,64 @@ func (c *Context) doWait(ctx context.Context, fn func() error) error {
 	return c.doWith(ctx, fn, true)
 }
 
-// doJob runs a pooled Job on the executor with the same wait semantics as
-// doWait, but without allocating a closure per call. Used by the hot copy,
+func (c *Context) syncExecutor() (*executor.Executor, error) {
+	c.syncMu.Lock()
+	defer c.syncMu.Unlock()
+	if c.syncExec != nil {
+		return c.syncExec, nil
+	}
+
+	candidate := executor.New()
+	if err := candidate.Do(func() error {
+		return cudaresult.CtxSetCurrent(c.driver, c.raw)
+	}); err != nil {
+		candidate.Retire()
+		_ = candidate.Close()
+		return nil, err
+	}
+	c.syncExec = candidate
+	return candidate, nil
+}
+
+func (c *Context) syncBarrier(ctx context.Context) error {
+	if c.syncActive.Load() == 0 {
+		return nil
+	}
+	c.syncMu.Lock()
+	lane := c.syncExec
+	c.syncMu.Unlock()
+	if lane == nil {
+		return nil
+	}
+	return lane.DoCtx(ctx, syncBarrierNoop)
+}
+
+func syncBarrierNoop() error { return nil }
+
+type trackedSyncJob struct {
+	ctx *Context
+	job executor.Job
+}
+
+func (j *trackedSyncJob) Run() error {
+	return j.job.Run()
+}
+
+func (j *trackedSyncJob) Recycle() {
+	ctx, job := j.ctx, j.job
+	*j = trackedSyncJob{}
+	executor.RecycleJob(job)
+	ctx.syncActive.Add(-1)
+	trackedSyncJobPool.Put(j)
+}
+
+var trackedSyncJobPool = sync.Pool{New: func() any { return new(trackedSyncJob) }}
+
+// doJob runs a pooled Job on the command executor with the same wait semantics
+// as doWait, but without allocating a closure per call. Used by the hot copy,
 // memset, and launch paths.
 func (c *Context) doJob(ctx context.Context, j executor.Job) error {
-	if c == nil || c.exec == nil {
+	if c == nil {
 		executor.RecycleJob(j)
 		return ErrNilContext
 	}
@@ -151,17 +207,29 @@ func (c *Context) doJob(ctx context.Context, j executor.Job) error {
 	}
 	c.opMu.RLock()
 	defer c.opMu.RUnlock()
+	if c.exec == nil {
+		executor.RecycleJob(j)
+		return ErrNilContext
+	}
 	if c.closed.Load() {
 		executor.RecycleJob(j)
 		return ErrContextClosed
+	}
+	if c.commandErr != nil {
+		if err := ctx.Err(); err != nil {
+			executor.RecycleJob(j)
+			return err
+		}
+		executor.RecycleJob(j)
+		return c.commandErr
 	}
 	return c.exec.DoJob(ctx, j)
 }
 
-// doJobCtx runs a pooled Job with the cancellation semantics of do. The job
-// must be executor-recycled (implement Recycle), never pooled by the caller.
+// doJobCtx runs a pooled Job on the synchronization executor. The job must be
+// executor-recycled (implement Recycle), never pooled by the caller.
 func (c *Context) doJobCtx(ctx context.Context, j executor.Job) error {
-	if c == nil || c.exec == nil {
+	if c == nil {
 		executor.RecycleJob(j)
 		return ErrNilContext
 	}
@@ -170,15 +238,35 @@ func (c *Context) doJobCtx(ctx context.Context, j executor.Job) error {
 	}
 	c.opMu.RLock()
 	defer c.opMu.RUnlock()
+	if c.exec == nil {
+		executor.RecycleJob(j)
+		return ErrNilContext
+	}
 	if c.closed.Load() {
 		executor.RecycleJob(j)
 		return ErrContextClosed
 	}
-	return c.exec.DoJobCtx(ctx, j)
+	if err := ctx.Err(); err != nil {
+		executor.RecycleJob(j)
+		return err
+	}
+	if c.commandErr != nil {
+		executor.RecycleJob(j)
+		return c.commandErr
+	}
+	lane, err := c.syncExecutor()
+	if err != nil {
+		executor.RecycleJob(j)
+		return err
+	}
+	tracked := trackedSyncJobPool.Get().(*trackedSyncJob)
+	tracked.ctx, tracked.job = c, j
+	c.syncActive.Add(1)
+	return lane.DoJobCtx(ctx, tracked)
 }
 
 func (c *Context) doWith(ctx context.Context, fn func() error, waitAfterSubmit bool) error {
-	if c == nil || c.exec == nil {
+	if c == nil {
 		return ErrNilContext
 	}
 	if ctx == nil {
@@ -186,43 +274,109 @@ func (c *Context) doWith(ctx context.Context, fn func() error, waitAfterSubmit b
 	}
 	c.opMu.RLock()
 	defer c.opMu.RUnlock()
+	if c.exec == nil {
+		return ErrNilContext
+	}
 	if c.closed.Load() {
 		return ErrContextClosed
 	}
+	if c.commandErr != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return c.commandErr
+	}
 	if waitAfterSubmit {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := c.syncBarrier(ctx); err != nil {
+			return err
+		}
 		return c.exec.DoCtxWait(ctx, fn)
 	}
 	return c.exec.DoCtx(ctx, fn)
 }
 
-// Close releases the primary context retain and stops the executor. After a
+func (c *Context) closeSyncExecutor() error {
+	c.syncMu.Lock()
+	lane := c.syncExec
+	c.syncExec = nil
+	c.syncMu.Unlock()
+	if lane == nil {
+		return nil
+	}
+
+	clearErr := lane.Do(func() error {
+		return cudaresult.CtxSetCurrent(c.driver, 0)
+	})
+	if clearErr != nil {
+		lane.Retire()
+	}
+	return errors.Join(clearErr, lane.Close())
+}
+
+func (c *Context) recoverCommandExecutor() error {
+	if c.commandErr == nil {
+		return nil
+	}
+	candidate := executor.New()
+	if err := candidate.Do(func() error {
+		return cudaresult.CtxSetCurrent(c.driver, c.raw)
+	}); err != nil {
+		candidate.Retire()
+		_ = candidate.Close()
+		c.commandErr = err
+		return err
+	}
+	c.exec = candidate
+	c.commandErr = nil
+	return nil
+}
+
+// Close releases the primary context retain and stops both executors. After a
 // successful Close, all Context methods return ErrContextClosed and further
 // Close calls return nil. If releasing the primary context fails the retain
 // count was not dropped, so the Context stays open for Close to be retried.
 func (c *Context) Close() error {
-	if c == nil || c.exec == nil || c.device == nil {
+	if c == nil || c.device == nil {
 		return ErrNilContext
 	}
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
+	if c.exec == nil {
+		return ErrNilContext
+	}
 	if c.closed.Load() {
 		return nil
 	}
-	var clearErr, releaseErr error
+	if err := c.recoverCommandExecutor(); err != nil {
+		return err
+	}
+
+	syncErr := c.closeSyncExecutor()
+	var clearErr, releaseErr, restoreErr error
 	if err := c.exec.Do(func() error {
 		clearErr = cudaresult.CtxSetCurrent(c.driver, 0)
 		releaseErr = cudaresult.PrimaryCtxRelease(c.driver, c.device.handle)
+		if releaseErr != nil {
+			restoreErr = cudaresult.CtxSetCurrent(c.driver, c.raw)
+		}
 		return nil
 	}); err != nil {
-		return err
+		return errors.Join(syncErr, err)
 	}
 	if releaseErr != nil {
-		return releaseErr
+		if restoreErr != nil {
+			c.commandErr = restoreErr
+			c.exec.Retire()
+			_ = c.exec.Close()
+		}
+		return errors.Join(syncErr, clearErr, releaseErr, restoreErr)
 	}
 	c.closed.Store(true)
 	if clearErr != nil {
 		c.exec.Retire()
 	}
-	_ = c.exec.Close()
-	return clearErr
+	return errors.Join(syncErr, clearErr, c.exec.Close())
 }

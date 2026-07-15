@@ -50,14 +50,56 @@ func (f funcJob) Run() error { return f() }
 
 type task struct {
 	job    Job
-	result chan error
+	result *completion
 }
 
-// resultPool recycles the per-call completion channels so a submission on a hot
-// path does not allocate one each time. A channel is only returned to the pool
-// once its result has been received (or it was never handed to the executor), so
-// every channel taken from the pool is empty.
-var resultPool = sync.Pool{New: func() any { return make(chan error, 1) }}
+type completionState uint32
+
+const (
+	completionWaiting completionState = iota
+	completionAbandoned
+	completionReceived
+	completionDelivered
+)
+
+// completion coordinates ownership of a result channel after either side can
+// finish first. The side that observes the other's state returns it to the pool.
+type completion struct {
+	result chan error
+	state  atomic.Uint32
+}
+
+func (c *completion) delivered() bool {
+	previous := completionState(c.state.Swap(uint32(completionDelivered)))
+	if previous == completionAbandoned {
+		<-c.result
+	}
+	return previous != completionWaiting
+}
+
+func (c *completion) received() bool {
+	return completionState(c.state.Swap(uint32(completionReceived))) == completionDelivered
+}
+
+func (c *completion) abandon() bool {
+	if completionState(c.state.Swap(uint32(completionAbandoned))) != completionDelivered {
+		return false
+	}
+	<-c.result
+	return true
+}
+
+// resultPool recycles completions so a submission on a hot path does not
+// allocate. The ownership handshake guarantees every pooled channel is empty,
+// including when a caller cancels after submission.
+var resultPool = sync.Pool{New: func() any {
+	return &completion{result: make(chan error, 1)}
+}}
+
+func recycleCompletion(c *completion) {
+	c.state.Store(uint32(completionWaiting))
+	resultPool.Put(c)
+}
 
 // Executor runs functions on a single OS thread. Construct one per CUDA
 // context so that "current context" stays stable across calls. When Close stops
@@ -80,9 +122,25 @@ type Executor struct {
 // before parking, because waking a parked goroutine across the pinned thread
 // costs far more than the spin (see docs/internals.md). Idle executors park.
 const (
-	workerSpin = 4096
-	callerSpin = 4096
+	workerSpin           = 4096
+	callerSpin           = 4096
+	multiPSpinYieldEvery = 128
 )
+
+func spinYieldEvery() int {
+	return spinYieldEveryFor(runtime.GOMAXPROCS(0))
+}
+
+func spinYieldEveryFor(procs int) int {
+	if procs <= 1 {
+		return 1
+	}
+	return multiPSpinYieldEvery
+}
+
+func shouldYield(spins, every int) bool {
+	return spins > 0 && spins%every == 0
+}
 
 // New starts a pinned-thread executor goroutine.
 func New() *Executor {
@@ -104,11 +162,13 @@ func (e *Executor) run() {
 		}
 	}()
 	spin := 0
+	yieldEvery := multiPSpinYieldEvery
 	for {
 		select {
 		case t := <-e.tasks:
 			e.runTask(t)
 			spin = workerSpin
+			yieldEvery = spinYieldEvery()
 			continue
 		case <-e.quit:
 			e.drain()
@@ -117,12 +177,16 @@ func (e *Executor) run() {
 		}
 		if spin > 0 {
 			spin--
+			if shouldYield(spin, yieldEvery) {
+				runtime.Gosched()
+			}
 			continue
 		}
 		select {
 		case t := <-e.tasks:
 			e.runTask(t)
 			spin = workerSpin
+			yieldEvery = spinYieldEvery()
 		case <-e.quit:
 			e.drain()
 			return
@@ -133,7 +197,10 @@ func (e *Executor) run() {
 func (e *Executor) runTask(t task) {
 	err := e.runOne(t.job)
 	RecycleJob(t.job)
-	t.result <- err
+	t.result.result <- err
+	if t.result.delivered() {
+		recycleCompletion(t.result)
+	}
 }
 
 // RecycleJob returns a worker-owned job to its pool if it implements Recycle.
@@ -180,29 +247,29 @@ func (e *Executor) Do(fn func() error) error {
 	return e.DoCtx(context.Background(), fn)
 }
 
-func (e *Executor) submit(ctx context.Context, j Job) (chan error, error) {
+func (e *Executor) submit(ctx context.Context, j Job) (*completion, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	res := resultPool.Get().(chan error)
+	res := resultPool.Get().(*completion)
 	e.mu.RLock()
 	if e.closed {
 		e.mu.RUnlock()
-		resultPool.Put(res)
+		recycleCompletion(res)
 		return nil, ErrExecutorClosed
 	}
 	select {
 	case e.tasks <- task{job: j, result: res}:
 	case <-ctx.Done():
 		e.mu.RUnlock()
-		resultPool.Put(res)
+		recycleCompletion(res)
 		return nil, ctx.Err()
 	case <-e.done:
 		e.mu.RUnlock()
-		resultPool.Put(res)
+		recycleCompletion(res)
 		return nil, ErrExecutorClosed
 	}
 	e.mu.RUnlock()
@@ -223,28 +290,43 @@ func (e *Executor) DoCtx(ctx context.Context, fn func() error) error {
 // the wait while j still runs on the executor. A job used this way must be
 // recycled by the executor (implement Recycle), never by the caller.
 func (e *Executor) DoJobCtx(ctx context.Context, j Job) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	res, err := e.submit(ctx, j)
 	if err != nil {
 		RecycleJob(j)
 		return err
 	}
+	yieldEvery := spinYieldEvery()
 	for i := 0; i < callerSpin; i++ {
 		select {
-		case err := <-res:
-			resultPool.Put(res)
+		case err := <-res.result:
+			if res.received() {
+				recycleCompletion(res)
+			}
 			return err
 		case <-ctx.Done():
+			if res.abandon() {
+				recycleCompletion(res)
+			}
 			return ctx.Err()
 		default:
 		}
+		if shouldYield(i+1, yieldEvery) {
+			runtime.Gosched()
+		}
 	}
 	select {
-	case err := <-res:
-		resultPool.Put(res)
+	case err := <-res.result:
+		if res.received() {
+			recycleCompletion(res)
+		}
 		return err
 	case <-ctx.Done():
-		// The job is still in flight and the executor will send to res later, so
-		// the channel cannot be recycled; let it be collected instead.
+		if res.abandon() {
+			recycleCompletion(res)
+		}
 		return ctx.Err()
 	}
 }
@@ -267,16 +349,24 @@ func (e *Executor) DoJob(ctx context.Context, j Job) error {
 		RecycleJob(j)
 		return err
 	}
+	yieldEvery := spinYieldEvery()
 	for i := 0; i < callerSpin; i++ {
 		select {
-		case err := <-res:
-			resultPool.Put(res)
+		case err := <-res.result:
+			if res.received() {
+				recycleCompletion(res)
+			}
 			return err
 		default:
 		}
+		if shouldYield(i+1, yieldEvery) {
+			runtime.Gosched()
+		}
 	}
-	err = <-res
-	resultPool.Put(res)
+	err = <-res.result
+	if res.received() {
+		recycleCompletion(res)
+	}
 	return err
 }
 
