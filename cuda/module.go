@@ -254,7 +254,7 @@ func (m *Module) Close() error {
 	if m.closed {
 		return nil
 	}
-	if err := m.ctx.doWait(context.Background(), func() error {
+	if err := m.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.ModuleUnload(m.ctx.driver, m.raw)
 	}); err != nil {
 		return err

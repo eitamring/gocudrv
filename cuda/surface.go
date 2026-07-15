@@ -76,7 +76,7 @@ func (s *Surface) Close() error {
 	if s.closed {
 		return nil
 	}
-	if err := s.ctx.doWait(context.Background(), func() error {
+	if err := s.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.SurfObjectDestroy(s.ctx.driver, s.handle)
 	}); err != nil {
 		return err

@@ -200,7 +200,7 @@ func (v *Volume[T]) Close() error {
 	if v.closed {
 		return nil
 	}
-	if err := v.ctx.doWait(context.Background(), func() error {
+	if err := v.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.MemFree(v.ctx.driver, v.ptr)
 	}); err != nil {
 		return err

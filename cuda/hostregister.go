@@ -103,7 +103,7 @@ func (r *RegisteredHost[T]) Close() error {
 	if r.closed {
 		return nil
 	}
-	if err := r.ctx.doWait(context.Background(), func() error {
+	if err := r.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.MemHostUnregister(r.ctx.driver, r.ptr)
 	}); err != nil {
 		return err

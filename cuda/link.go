@@ -187,7 +187,7 @@ func (l *Linker) Close() error {
 	if l.closed {
 		return nil
 	}
-	if err := l.ctx.doWait(context.Background(), func() error {
+	if err := l.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.LinkDestroy(l.ctx.driver, l.raw)
 	}); err != nil {
 		return err

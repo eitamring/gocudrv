@@ -123,7 +123,7 @@ func (g *Graph) Close() error {
 	if g.closed {
 		return nil
 	}
-	if err := g.ctx.doWait(context.Background(), func() error {
+	if err := g.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.GraphDestroy(g.ctx.driver, g.raw)
 	}); err != nil {
 		return err
@@ -197,7 +197,7 @@ func (e *GraphExec) Close() error {
 	if e.closed {
 		return nil
 	}
-	if err := e.ctx.doWait(context.Background(), func() error {
+	if err := e.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.GraphExecDestroy(e.ctx.driver, e.raw)
 	}); err != nil {
 		return err

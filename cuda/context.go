@@ -134,11 +134,17 @@ func (c *Context) MemInfo() (free, total uint64, err error) {
 
 // do runs fn on the context's pinned command executor with cancellation.
 func (c *Context) do(ctx context.Context, fn func() error) error {
-	return c.doWith(ctx, fn, false)
+	return c.doWith(ctx, fn, false, false)
 }
 
+// doWait waits for fn after submission without draining synchronization work.
 func (c *Context) doWait(ctx context.Context, fn func() error) error {
-	return c.doWith(ctx, fn, true)
+	return c.doWith(ctx, fn, true, false)
+}
+
+// doBarrier drains synchronization work before running a teardown command.
+func (c *Context) doBarrier(ctx context.Context, fn func() error) error {
+	return c.doWith(ctx, fn, true, true)
 }
 
 func (c *Context) syncExecutor() (*executor.Executor, error) {
@@ -265,7 +271,7 @@ func (c *Context) doJobCtx(ctx context.Context, j executor.Job) error {
 	return lane.DoJobCtx(ctx, tracked)
 }
 
-func (c *Context) doWith(ctx context.Context, fn func() error, waitAfterSubmit bool) error {
+func (c *Context) doWith(ctx context.Context, fn func() error, waitAfterSubmit, barrierBeforeSubmit bool) error {
 	if c == nil {
 		return ErrNilContext
 	}
@@ -290,8 +296,10 @@ func (c *Context) doWith(ctx context.Context, fn func() error, waitAfterSubmit b
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := c.syncBarrier(ctx); err != nil {
-			return err
+		if barrierBeforeSubmit {
+			if err := c.syncBarrier(ctx); err != nil {
+				return err
+			}
 		}
 		return c.exec.DoCtxWait(ctx, fn)
 	}

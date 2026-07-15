@@ -240,7 +240,7 @@ func (b *VirtualBuffer[T]) Close() error {
 		return nil
 	}
 	var errs []error
-	outer := b.ctx.doWait(context.Background(), func() error {
+	outer := b.ctx.doBarrier(context.Background(), func() error {
 		tryFree(&b.mapped, &errs, func() error { return cudaresult.MemUnmap(b.ctx.driver, b.ptr, b.size) })
 		tryFree(&b.created, &errs, func() error { return cudaresult.MemRelease(b.ctx.driver, b.handle) })
 		if !b.mapped {
