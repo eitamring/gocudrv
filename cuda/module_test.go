@@ -1,6 +1,7 @@
 package cuda
 
 import (
+	"bytes"
 	"errors"
 	"math"
 	"os"
@@ -14,12 +15,32 @@ import (
 )
 
 type moduleFake struct {
-	loadCalls   atomic.Int32
-	unloadCalls atomic.Int32
-	getFnCalls  atomic.Int32
-	lastImage   []byte
-	lastName    []byte
-	lastModule  atomic.Uintptr
+	loadCalls      atomic.Int32
+	unloadCalls    atomic.Int32
+	getFnCalls     atomic.Int32
+	binaryImageLen int
+	lastImage      []byte
+	lastImagePtr   atomic.Pointer[byte]
+	lastName       []byte
+	lastModule     atomic.Uintptr
+}
+
+func (m *moduleFake) recordImage(image *byte) {
+	m.lastImagePtr.Store(image)
+	if m.binaryImageLen > 0 {
+		m.lastImage = append([]byte(nil), unsafe.Slice(image, m.binaryImageLen)...)
+		return
+	}
+
+	length := 0
+	for {
+		b := *(*byte)(unsafe.Add(unsafe.Pointer(image), length))
+		length++
+		if b == 0 {
+			break
+		}
+	}
+	m.lastImage = append([]byte(nil), unsafe.Slice(image, length)...)
 }
 
 func (m *moduleFake) driver(failUnload *atomic.Bool) *cudasys.Driver {
@@ -37,16 +58,13 @@ func (m *moduleFake) driver(failUnload *atomic.Bool) *cudasys.Driver {
 		CuCtxSetCurrent:           func(cudasys.CUcontext) cudasys.CUresult { return cudasys.CUDA_SUCCESS },
 		CuModuleLoadData: func(mod *cudasys.CUmodule, image *byte) cudasys.CUresult {
 			m.loadCalls.Add(1)
-			// Copy the bytes the driver sees including the null terminator.
-			length := 0
-			for {
-				b := *(*byte)(unsafe.Add(unsafe.Pointer(image), length))
-				length++
-				if b == 0 {
-					break
-				}
-			}
-			m.lastImage = append([]byte(nil), unsafe.Slice(image, length)...)
+			m.recordImage(image)
+			*mod = 0xBEEF
+			return cudasys.CUDA_SUCCESS
+		},
+		CuModuleLoadDataEx: func(mod *cudasys.CUmodule, image *byte, _ uint32, _ *int32, _ *uintptr) cudasys.CUresult {
+			m.loadCalls.Add(1)
+			m.recordImage(image)
 			*mod = 0xBEEF
 			return cudasys.CUDA_SUCCESS
 		},
@@ -163,6 +181,100 @@ func TestLoadModulePreservesNullTerminated(t *testing.T) {
 			t.Errorf("byte[%d] = %d, want %d", i, f.lastImage[i], image[i])
 		}
 	}
+}
+
+func TestLoadModulePreservesBinaryInput(t *testing.T) {
+	images := []struct {
+		name  string
+		image []byte
+	}{
+		{"cubin", []byte{0x7f, 'E', 'L', 'F', 1, 2, 3, 4}},
+		{"fatbin", []byte{0x50, 0xed, 0x55, 0xba, 1, 2, 3, 4}},
+	}
+	loaders := []struct {
+		name string
+		load func(*Context, []byte) (*Module, error)
+	}{
+		{"LoadModule", func(ctx *Context, image []byte) (*Module, error) {
+			return ctx.LoadModule(image)
+		}},
+		{"LoadModuleEx", func(ctx *Context, image []byte) (*Module, error) {
+			mod, _, err := ctx.LoadModuleEx(image, JITOptions{LogBufferBytes: 16})
+			return mod, err
+		}},
+	}
+
+	for _, imageCase := range images {
+		for _, loader := range loaders {
+			t.Run(imageCase.name+"/"+loader.name, func(t *testing.T) {
+				f := moduleFake{binaryImageLen: len(imageCase.image)}
+				ctx := newModuleTestContext(t, &f, nil)
+				mod, err := loader.load(ctx, imageCase.image)
+				if err != nil {
+					t.Fatalf("%s: %v", loader.name, err)
+				}
+				t.Cleanup(func() { _ = mod.Close() })
+
+				if got, want := f.lastImagePtr.Load(), unsafe.SliceData(imageCase.image); got != want {
+					t.Errorf("driver image pointer = %p, want %p", got, want)
+				}
+				if !bytes.Equal(f.lastImage, imageCase.image) {
+					t.Errorf("driver image = %x, want %x", f.lastImage, imageCase.image)
+				}
+			})
+		}
+	}
+}
+
+func TestModuleImagePreservesBinary(t *testing.T) {
+	images := [][]byte{
+		{0x7f, 'E', 'L', 'F', 1, 2, 3},
+		{0x50, 0xed, 0x55, 0xba, 1, 2, 3},
+	}
+	for _, image := range images {
+		got := moduleImage(image)
+		if unsafe.SliceData(got) != unsafe.SliceData(image) {
+			t.Errorf("binary image %x was copied", image[:4])
+		}
+	}
+}
+
+func TestModuleImageDoesNotClassifyEmbeddedNullAsBinary(t *testing.T) {
+	image := []byte{'.', 'v', 0, 'x'}
+	got := moduleImage(image)
+	if unsafe.SliceData(got) == unsafe.SliceData(image) {
+		t.Fatal("unrecognized image with no trailing null was not copied")
+	}
+	if len(got) != len(image)+1 || got[len(got)-1] != 0 {
+		t.Fatalf("image = %v, want copied input plus null", got)
+	}
+}
+
+var moduleImageSink []byte
+
+func BenchmarkModuleImage(b *testing.B) {
+	b.Run("binary", func(b *testing.B) {
+		image := make([]byte, 1<<20)
+		for i := range image {
+			image[i] = 1
+		}
+		copy(image, cubinMagic)
+		b.ReportAllocs()
+		for b.Loop() {
+			moduleImageSink = moduleImage(image)
+		}
+	})
+	b.Run("ptx", func(b *testing.B) {
+		image := make([]byte, 64<<10)
+		for i := range image {
+			image[i] = 'x'
+		}
+		b.SetBytes(int64(len(image)))
+		b.ReportAllocs()
+		for b.Loop() {
+			moduleImageSink = moduleImage(image)
+		}
+	})
 }
 
 func TestLoadModuleRejects(t *testing.T) {
@@ -287,6 +399,35 @@ func TestLoadModuleFromFile(t *testing.T) {
 		if f.lastImage[i] != want[i] {
 			t.Errorf("byte[%d] = %d, want %d", i, f.lastImage[i], want[i])
 		}
+	}
+}
+
+func TestLoadModuleFromFilePreservesBinary(t *testing.T) {
+	images := []struct {
+		name  string
+		image []byte
+	}{
+		{"cubin", []byte{0x7f, 'E', 'L', 'F', 1, 2, 3, 4}},
+		{"fatbin", []byte{0x50, 0xed, 0x55, 0xba, 1, 2, 3, 4}},
+	}
+	for _, tc := range images {
+		t.Run(tc.name, func(t *testing.T) {
+			f := moduleFake{binaryImageLen: len(tc.image)}
+			ctx := newModuleTestContext(t, &f, nil)
+			path := filepath.Join(t.TempDir(), "module."+tc.name)
+			if err := os.WriteFile(path, tc.image, 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+
+			mod, err := ctx.LoadModuleFromFile(path)
+			if err != nil {
+				t.Fatalf("LoadModuleFromFile: %v", err)
+			}
+			t.Cleanup(func() { _ = mod.Close() })
+			if !bytes.Equal(f.lastImage, tc.image) {
+				t.Errorf("driver image = %x, want %x", f.lastImage, tc.image)
+			}
+		})
 	}
 }
 

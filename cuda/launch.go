@@ -65,6 +65,30 @@ type kernelArgBuilder struct {
 	snapshot bool
 }
 
+type launchArgState struct {
+	builder kernelArgBuilder
+	packed  argpack.Builder
+}
+
+var launchArgStatePool = sync.Pool{New: func() any { return new(launchArgState) }}
+
+func newLaunchArgState(ctx *Context) *launchArgState {
+	s := launchArgStatePool.Get().(*launchArgState)
+	s.builder.ctx = ctx
+	s.builder.packed = &s.packed
+	return s
+}
+
+func (s *launchArgState) reset() {
+	s.builder.release()
+	*s = launchArgState{}
+}
+
+func (s *launchArgState) recycle() {
+	s.reset()
+	launchArgStatePool.Put(s)
+}
+
 func (b *kernelArgBuilder) addDevicePtr(ptr cudasys.CUdeviceptr) {
 	argpack.Add(b.packed, ptr)
 }
@@ -249,20 +273,19 @@ func (f *Function) launch(ctx context.Context, rawStream cudasys.CUstream, strea
 		return ErrModuleClosed
 	}
 
-	var pk argpack.Builder
-	builder := kernelArgBuilder{ctx: f.module.ctx, packed: &pk}
-	defer builder.release()
+	state := newLaunchArgState(f.module.ctx)
+	defer state.recycle()
 	for _, arg := range args {
 		if arg == nil {
 			return ErrNilKernelArg
 		}
-		if err := arg.appendKernelArg(&builder); err != nil {
+		if err := arg.appendKernelArg(&state.builder); err != nil {
 			return err
 		}
 	}
 
-	err := f.module.ctx.launchKernel(ctx, f.raw, cfg, rawStream, pk.Params(), cooperative)
-	pk.KeepAlive()
+	err := f.module.ctx.launchKernel(ctx, f.raw, cfg, rawStream, state.packed.Params(), cooperative)
+	state.packed.KeepAlive()
 	return err
 }
 

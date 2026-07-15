@@ -99,9 +99,7 @@ func WriteGlobal[T Supported](ctx context.Context, g *Global, vals []T) error {
 		return ErrLengthMismatch
 	}
 	srcPtr := (*byte)(unsafe.Pointer(&vals[0]))
-	err := g.module.ctx.doWait(ctx, func() error {
-		return cudaresult.MemcpyHtoD(g.module.ctx.driver, g.ptr, srcPtr, bytes)
-	})
+	err := g.module.ctx.memcpyHtoD(ctx, g.ptr, srcPtr, bytes)
 	runtime.KeepAlive(vals)
 	return err
 }
@@ -130,9 +128,7 @@ func ReadGlobal[T Supported](ctx context.Context, dst []T, g *Global) error {
 		return ErrLengthMismatch
 	}
 	dstPtr := (*byte)(unsafe.Pointer(&dst[0]))
-	err := g.module.ctx.doWait(ctx, func() error {
-		return cudaresult.MemcpyDtoH(g.module.ctx.driver, dstPtr, g.ptr, bytes)
-	})
+	err := g.module.ctx.memcpyDtoH(ctx, dstPtr, g.ptr, bytes)
 	runtime.KeepAlive(dst)
 	return err
 }

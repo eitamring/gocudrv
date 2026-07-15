@@ -1,6 +1,65 @@
 package cudaresult
 
-import "github.com/eitamring/gocudrv/cudasys"
+import (
+	"sync"
+
+	"github.com/eitamring/gocudrv/cudasys"
+)
+
+var (
+	errStreamQueryNotReady = &immutableResultError{
+		code: cudasys.CUDA_ERROR_NOT_READY,
+		op:   "cuStreamQuery",
+		text: "cuStreamQuery: CUDA_ERROR_NOT_READY",
+	}
+	errEventQueryNotReady = &immutableResultError{
+		code: cudasys.CUDA_ERROR_NOT_READY,
+		op:   "cuEventQuery",
+		text: "cuEventQuery: CUDA_ERROR_NOT_READY",
+	}
+	errEventTimeNotReady = &immutableResultError{
+		code: cudasys.CUDA_ERROR_NOT_READY,
+		op:   "cuEventElapsedTime",
+		text: "cuEventElapsedTime: CUDA_ERROR_NOT_READY",
+	}
+)
+
+// immutableResultError keeps common result errors static. As returns a fresh
+// Error because its exported fields are mutable.
+type immutableResultError struct {
+	code cudasys.CUresult
+	op   string
+	text string
+}
+
+func (e *immutableResultError) Error() string { return e.text }
+
+func (e *immutableResultError) Is(target error) bool {
+	switch target := target.(type) {
+	case *Error:
+		return target != nil && e.code == target.Code
+	case *immutableResultError:
+		return target != nil && e.code == target.code
+	default:
+		return false
+	}
+}
+
+func (e *immutableResultError) As(target any) bool {
+	out, ok := target.(**Error)
+	if !ok {
+		return false
+	}
+	*out = &Error{Code: e.code, Op: e.op}
+	return true
+}
+
+func checkNotReady(op string, code cudasys.CUresult, notReady error) error {
+	if code == cudasys.CUDA_ERROR_NOT_READY {
+		return notReady
+	}
+	return check(op, code)
+}
 
 // StreamCreate creates a CUDA stream with the supplied creation flags.
 func StreamCreate(d *cudasys.Driver, flags uint32) (cudasys.CUstream, error) {
@@ -50,7 +109,7 @@ func StreamQuery(d *cudasys.Driver, stream cudasys.CUstream) error {
 	if d == nil || d.CuStreamQuery == nil {
 		return ErrNotInitialized
 	}
-	return check("cuStreamQuery", d.CuStreamQuery(stream))
+	return checkNotReady("cuStreamQuery", d.CuStreamQuery(stream), errStreamQueryNotReady)
 }
 
 // StreamWaitEvent makes stream wait until event has completed.
@@ -95,7 +154,7 @@ func EventQuery(d *cudasys.Driver, event cudasys.CUevent) error {
 	if d == nil || d.CuEventQuery == nil {
 		return ErrNotInitialized
 	}
-	return check("cuEventQuery", d.CuEventQuery(event))
+	return checkNotReady("cuEventQuery", d.CuEventQuery(event), errEventQueryNotReady)
 }
 
 // EventSynchronize blocks until event has completed.
@@ -106,14 +165,20 @@ func EventSynchronize(d *cudasys.Driver, event cudasys.CUevent) error {
 	return check("cuEventSynchronize", d.CuEventSynchronize(event))
 }
 
+var eventElapsedTimePool = sync.Pool{New: func() any { return new(float32) }}
+
 // EventElapsedTime returns milliseconds elapsed between two recorded events.
 func EventElapsedTime(d *cudasys.Driver, start, end cudasys.CUevent) (float32, error) {
 	if d == nil || d.CuEventElapsedTime == nil {
 		return 0, ErrNotInitialized
 	}
-	var ms float32
-	if err := check("cuEventElapsedTime", d.CuEventElapsedTime(&ms, start, end)); err != nil {
+	ms := eventElapsedTimePool.Get().(*float32)
+	code := d.CuEventElapsedTime(ms, start, end)
+	value := *ms
+	*ms = 0
+	eventElapsedTimePool.Put(ms)
+	if err := checkNotReady("cuEventElapsedTime", code, errEventTimeNotReady); err != nil {
 		return 0, err
 	}
-	return ms, nil
+	return value, nil
 }

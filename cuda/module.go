@@ -40,9 +40,9 @@ type Function struct {
 }
 
 // LoadModule loads a PTX or cubin image into the context. The image is
-// passed to cuModuleLoadData. PTX images must be null-terminated; if image
-// is not already null-terminated, a null byte is appended to a fresh copy
-// before submission so the original slice is not mutated.
+// passed to cuModuleLoadData. Recognized cubin and fatbin images are passed
+// through unchanged. Other images are treated as PTX and copied when they do
+// not end in a null terminator.
 func (c *Context) LoadModule(image []byte) (*Module, error) {
 	if c == nil {
 		return nil, ErrNilContext
@@ -50,7 +50,7 @@ func (c *Context) LoadModule(image []byte) (*Module, error) {
 	if len(image) == 0 {
 		return nil, ErrEmptyImage
 	}
-	buf := nullTerminated(image)
+	buf := moduleImage(image)
 
 	var raw cudasys.CUmodule
 	err := c.doWait(context.Background(), func() error {
@@ -68,9 +68,8 @@ func (c *Context) LoadModule(image []byte) (*Module, error) {
 	return &Module{ctx: c, raw: raw}, nil
 }
 
-// nullTerminated returns image unchanged if it already ends in a null byte, or a
-// fresh null-terminated copy otherwise, so the original slice is never mutated.
-// PTX images must be null-terminated for cuModuleLoadData(Ex).
+// nullTerminated returns image unchanged if it ends in a null byte, or a fresh
+// null-terminated copy otherwise, so the original slice is never mutated.
 func nullTerminated(image []byte) []byte {
 	if len(image) > 0 && image[len(image)-1] == 0 {
 		return image
@@ -78,6 +77,18 @@ func nullTerminated(image []byte) []byte {
 	buf := make([]byte, len(image)+1)
 	copy(buf, image)
 	return buf
+}
+
+var (
+	cubinMagic  = []byte{0x7f, 'E', 'L', 'F'}
+	fatbinMagic = []byte{0x50, 0xed, 0x55, 0xba}
+)
+
+func moduleImage(image []byte) []byte {
+	if bytes.HasPrefix(image, cubinMagic) || bytes.HasPrefix(image, fatbinMagic) {
+		return image
+	}
+	return nullTerminated(image)
 }
 
 // trimNull returns the bytes of b up to the first null, as a string.
@@ -141,7 +152,7 @@ func (c *Context) LoadModuleEx(image []byte, opts JITOptions) (*Module, JITLog, 
 	if int64(opts.MaxRegisters) > math.MaxUint32 {
 		return nil, JITLog{}, ErrInvalidValue
 	}
-	buf := nullTerminated(image)
+	buf := moduleImage(image)
 
 	infoBuf := make([]byte, size)
 	errBuf := make([]byte, size)

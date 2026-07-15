@@ -414,6 +414,12 @@ func TestEventQuery(t *testing.T) {
 			if !errors.Is(err, tc.wantErr) {
 				t.Errorf("err = %v, want %v", err, tc.wantErr)
 			}
+			if tc.wantErr == ErrNotReady {
+				var cudaErr *Error
+				if !errors.As(err, &cudaErr) || cudaErr.Op != "cuEventQuery" {
+					t.Errorf("err = %#v, want cuEventQuery not-ready error", err)
+				}
+			}
 		})
 	}
 }
@@ -500,6 +506,12 @@ func TestEventElapsedTime(t *testing.T) {
 				if !errors.Is(err, tc.wantErr) {
 					t.Errorf("err = %v, want %v", err, tc.wantErr)
 				}
+				if tc.wantErr == ErrNotReady {
+					var cudaErr *Error
+					if !errors.As(err, &cudaErr) || cudaErr.Op != "cuEventElapsedTime" || err.Error() != "cuEventElapsedTime: CUDA_ERROR_NOT_READY" {
+						t.Errorf("err = %#v, want cuEventElapsedTime not-ready error", err)
+					}
+				}
 				return
 			}
 			if err != nil {
@@ -526,5 +538,136 @@ func TestStreamQuery(t *testing.T) {
 	pending := &cudasys.Driver{CuStreamQuery: func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_ERROR_NOT_READY }}
 	if err := StreamQuery(pending, 0x5151); !errors.Is(err, ErrNotReady) {
 		t.Errorf("pending = %v, want ErrNotReady", err)
+	} else {
+		var cudaErr *Error
+		if !errors.As(err, &cudaErr) || cudaErr.Op != "cuStreamQuery" || err.Error() != "cuStreamQuery: CUDA_ERROR_NOT_READY" {
+			t.Errorf("pending = %#v, want cuStreamQuery not-ready error", err)
+		}
+	}
+	failed := &cudasys.Driver{CuStreamQuery: func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_ERROR_INVALID_HANDLE }}
+	err := StreamQuery(failed, 0x5151)
+	var cudaErr *Error
+	if !errors.As(err, &cudaErr) || cudaErr.Op != "cuStreamQuery" {
+		t.Errorf("failed query = %#v, want cuStreamQuery error", err)
+	}
+}
+
+func TestNotReadyErrorsAreImmutable(t *testing.T) {
+	stream := &cudasys.Driver{CuStreamQuery: func(cudasys.CUstream) cudasys.CUresult {
+		return cudasys.CUDA_ERROR_NOT_READY
+	}}
+	event := &cudasys.Driver{CuEventQuery: func(cudasys.CUevent) cudasys.CUresult {
+		return cudasys.CUDA_ERROR_NOT_READY
+	}}
+	elapsed := &cudasys.Driver{CuEventElapsedTime: func(*float32, cudasys.CUevent, cudasys.CUevent) cudasys.CUresult {
+		return cudasys.CUDA_ERROR_NOT_READY
+	}}
+	cases := []struct {
+		name string
+		call func() error
+		op   string
+		text string
+	}{
+		{"stream", func() error { return StreamQuery(stream, 1) }, "cuStreamQuery", "cuStreamQuery: CUDA_ERROR_NOT_READY"},
+		{"event", func() error { return EventQuery(event, 1) }, "cuEventQuery", "cuEventQuery: CUDA_ERROR_NOT_READY"},
+		{"elapsed", func() error {
+			_, err := EventElapsedTime(elapsed, 1, 2)
+			return err
+		}, "cuEventElapsedTime", "cuEventElapsedTime: CUDA_ERROR_NOT_READY"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			first := tc.call()
+			var exposed *Error
+			if !errors.As(first, &exposed) {
+				t.Fatalf("errors.As(%T) failed", first)
+			}
+			exposed.Code = cudasys.CUDA_SUCCESS
+			exposed.Op = "changed"
+
+			second := tc.call()
+			if !errors.Is(second, ErrNotReady) {
+				t.Fatalf("errors.Is(%v, ErrNotReady) = false", second)
+			}
+			if second.Error() != tc.text {
+				t.Errorf("Error() = %q, want %q", second.Error(), tc.text)
+			}
+			var fresh *Error
+			if !errors.As(second, &fresh) {
+				t.Fatalf("second errors.As(%T) failed", second)
+			}
+			if fresh == exposed {
+				t.Fatal("errors.As reused a mutable Error")
+			}
+			if fresh.Code != cudasys.CUDA_ERROR_NOT_READY || fresh.Op != tc.op {
+				t.Errorf("errors.As result = %#v, want not-ready %s error", fresh, tc.op)
+			}
+		})
+	}
+}
+
+var (
+	queryErrorSink error
+	elapsedSink    float32
+)
+
+func TestQueryNotReadyAllocs(t *testing.T) {
+	stream := &cudasys.Driver{CuStreamQuery: func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_ERROR_NOT_READY }}
+	event := &cudasys.Driver{CuEventQuery: func(cudasys.CUevent) cudasys.CUresult { return cudasys.CUDA_ERROR_NOT_READY }}
+	elapsed := &cudasys.Driver{CuEventElapsedTime: func(*float32, cudasys.CUevent, cudasys.CUevent) cudasys.CUresult {
+		return cudasys.CUDA_ERROR_NOT_READY
+	}}
+	if allocs := testing.AllocsPerRun(1000, func() { queryErrorSink = StreamQuery(stream, 1) }); allocs != 0 {
+		t.Errorf("StreamQuery allocations = %v, want 0", allocs)
+	}
+	if allocs := testing.AllocsPerRun(1000, func() { queryErrorSink = EventQuery(event, 1) }); allocs != 0 {
+		t.Errorf("EventQuery allocations = %v, want 0", allocs)
+	}
+	if allocs := testing.AllocsPerRun(1000, func() {
+		elapsedSink, queryErrorSink = EventElapsedTime(elapsed, 1, 2)
+	}); allocs != 0 {
+		t.Errorf("EventElapsedTime not-ready allocations = %v, want 0", allocs)
+	}
+}
+
+func TestEventElapsedTimeAllocs(t *testing.T) {
+	driver := &cudasys.Driver{CuEventElapsedTime: func(ms *float32, _, _ cudasys.CUevent) cudasys.CUresult {
+		*ms = 1.25
+		return cudasys.CUDA_SUCCESS
+	}}
+	if allocs := testing.AllocsPerRun(1000, func() {
+		var err error
+		elapsedSink, err = EventElapsedTime(driver, 1, 2)
+		queryErrorSink = err
+	}); allocs != 0 {
+		t.Errorf("EventElapsedTime allocations = %v, want 0", allocs)
+	}
+}
+
+func BenchmarkQueryNotReady(b *testing.B) {
+	stream := &cudasys.Driver{CuStreamQuery: func(cudasys.CUstream) cudasys.CUresult { return cudasys.CUDA_ERROR_NOT_READY }}
+	event := &cudasys.Driver{CuEventQuery: func(cudasys.CUevent) cudasys.CUresult { return cudasys.CUDA_ERROR_NOT_READY }}
+	b.Run("stream", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			queryErrorSink = StreamQuery(stream, 1)
+		}
+	})
+	b.Run("event", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			queryErrorSink = EventQuery(event, 1)
+		}
+	})
+}
+
+func BenchmarkEventElapsedTime(b *testing.B) {
+	driver := &cudasys.Driver{CuEventElapsedTime: func(ms *float32, _, _ cudasys.CUevent) cudasys.CUresult {
+		*ms = 1.25
+		return cudasys.CUDA_SUCCESS
+	}}
+	b.ReportAllocs()
+	for b.Loop() {
+		elapsedSink, queryErrorSink = EventElapsedTime(driver, 1, 2)
 	}
 }

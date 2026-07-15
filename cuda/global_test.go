@@ -235,3 +235,29 @@ func TestGlobalNilReceiverAccessors(t *testing.T) {
 		t.Errorf("nil Name = %q, want empty", g.Name())
 	}
 }
+
+func BenchmarkGlobalWrite(b *testing.B) {
+	ctx := benchContext(b)
+	g := &Global{module: &Module{ctx: ctx}, ptr: testGlobalPtr, bytes: testGlobalBytes}
+	vals := []float32{1, 2, 3, 4}
+	bg := context.Background()
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := WriteGlobal(bg, g, vals); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkGlobalRead(b *testing.B) {
+	ctx := benchContext(b)
+	g := &Global{module: &Module{ctx: ctx}, ptr: testGlobalPtr, bytes: testGlobalBytes}
+	vals := make([]float32, 4)
+	bg := context.Background()
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := ReadGlobal(bg, vals, g); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

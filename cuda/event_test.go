@@ -381,6 +381,33 @@ func TestEventElapsed(t *testing.T) {
 	}
 }
 
+var (
+	eventDurationSink time.Duration
+	eventErrorSink    error
+)
+
+func TestEventElapsedOpReset(t *testing.T) {
+	o := &eventElapsedOp{driver: &cudasys.Driver{}, start: 1, end: 2, ms: 3}
+	o.reset()
+	if o.driver != nil || o.start != 0 || o.end != 0 || o.ms != 0 {
+		t.Fatal("reset elapsed operation retained state")
+	}
+}
+
+func BenchmarkEventElapsed(b *testing.B) {
+	ctx := benchContext(b)
+	ctx.driver.CuEventElapsedTime = func(ms *float32, _, _ cudasys.CUevent) cudasys.CUresult {
+		*ms = 1.25
+		return cudasys.CUDA_SUCCESS
+	}
+	start := &Event{ctx: ctx, raw: 1}
+	end := &Event{ctx: ctx, raw: 2}
+	b.ReportAllocs()
+	for b.Loop() {
+		eventDurationSink, eventErrorSink = start.Elapsed(end)
+	}
+}
+
 func TestEventElapsedRejects(t *testing.T) {
 	var calls eventCalls
 	ctx, _, event := newEventFixture(t, &calls)
@@ -397,6 +424,8 @@ func TestEventElapsedRejects(t *testing.T) {
 		t.Fatalf("NewEvent timingDisabled: %v", err)
 	}
 	t.Cleanup(func() { _ = timingDisabled.Close() })
+	zeroStart := &Event{}
+	zeroEnd := &Event{}
 
 	cases := []struct {
 		name string
@@ -424,6 +453,10 @@ func TestEventElapsedRejects(t *testing.T) {
 			_, err := event.Elapsed(otherEvent)
 			return err
 		}, ErrContextMismatch},
+		{"zero events", func() error {
+			_, err := zeroStart.Elapsed(zeroEnd)
+			return err
+		}, ErrNilContext},
 		{"timing disabled start", func() error {
 			_, err := timingDisabled.Elapsed(event)
 			return err
@@ -481,6 +514,67 @@ func TestEventElapsedConcurrentOppositeOrder(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("Elapsed deadlocked")
 		}
+	}
+}
+
+func TestEventElapsedHoldsLocksDuringCall(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	driver := fakeEventDriver(&eventCalls{}, nil)
+	driver.CuEventElapsedTime = func(ms *float32, _, _ cudasys.CUevent) cudasys.CUresult {
+		close(entered)
+		<-release
+		*ms = 1.25
+		return cudasys.CUDA_SUCCESS
+	}
+	ctx := newTestContext(t, driver)
+	start := &Event{ctx: ctx, raw: 1}
+	end := &Event{ctx: ctx, raw: 2}
+
+	elapsedDone := make(chan error, 1)
+	go func() {
+		_, err := start.Elapsed(end)
+		elapsedDone <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("elapsed call did not enter driver")
+	}
+	if start.opMu.TryLock() {
+		start.opMu.Unlock()
+		close(release)
+		t.Fatal("start event was not locked during elapsed call")
+	}
+	if end.opMu.TryLock() {
+		end.opMu.Unlock()
+		close(release)
+		t.Fatal("end event was not locked during elapsed call")
+	}
+
+	startClose := make(chan error, 1)
+	endClose := make(chan error, 1)
+	go func() { startClose <- start.Close() }()
+	go func() { endClose <- end.Close() }()
+	for name, done := range map[string]<-chan error{"start": startClose, "end": endClose} {
+		select {
+		case err := <-done:
+			close(release)
+			t.Fatalf("%s close returned during elapsed call: %v", name, err)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+
+	close(release)
+	if err := <-elapsedDone; err != nil {
+		t.Errorf("Elapsed: %v", err)
+	}
+	if err := <-startClose; err != nil {
+		t.Errorf("start Close: %v", err)
+	}
+	if err := <-endClose; err != nil {
+		t.Errorf("end Close: %v", err)
 	}
 }
 
