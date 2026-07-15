@@ -1,0 +1,67 @@
+name: Feature request
+description: Suggest a CUDA Driver API capability or project improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: capability
+    attributes:
+      label: What should we add?
+      description: Describe the capability or project improvement.
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Why is it useful?
+      description: Explain the use case and why the current API is not enough.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Driver loading and devices
+        - Context and executor
+        - Memory and copies
+        - Modules and kernel launch
+        - Streams, events, and graphs
+        - Advanced memory or multi-GPU
+        - Documentation, examples, or CI
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: shape
+    attributes:
+      label: Example API or workflow
+      description: Optional. Show the smallest call site, command, or output that would make this useful.
+    validations:
+      required: false
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints and compatibility
+      description: Note no-cgo or toolkit-free requirements, fake drivers, supported platforms, older drivers, ownership, or public API concerns.
+    validations:
+      required: false
+
+  - type: textarea
+    id: recreate
+    attributes:
+      label: How to recreate
+      description: Give the smallest program or workflow that shows what cannot be done today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of done
+      description: List the behavior, tests, documentation, and compatibility result needed to close the ticket.
+    validations:
+      required: true

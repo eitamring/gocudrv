@@ -1,0 +1,80 @@
+name: Bug or performance problem
+description: Report incorrect behavior, regressions, crashes, or slow CUDA calls
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Include the smallest example that shows the problem. Remove private data before posting logs or profiles.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happens?
+      description: Describe the actual result, the expected result, and any known cause.
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: How does this affect you?
+      description: Explain the correctness, latency, CPU, GPU, memory, reliability, or platform impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or current numbers
+      description: Add errors, benchmark results, profiles, or before and after numbers.
+    validations:
+      required: false
+
+  - type: textarea
+    id: fix
+    attributes:
+      label: Likely fix
+      description: Optional. Describe a direction worth testing and any constraints it must preserve.
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the details that matter for reproducing this issue.
+      placeholder: |
+        gocudrv version or commit:
+        Go version:
+        OS and architecture:
+        native Linux, WSL2, or Windows:
+        NVIDIA GPU:
+        NVIDIA driver version:
+        CGO_ENABLED:
+        GOMAXPROCS or CPU limit:
+    validations:
+      required: true
+
+  - type: textarea
+    id: recreate
+    attributes:
+      label: How to recreate
+      description: Give the exact command or minimal program, then state the result that proves the problem exists.
+      placeholder: |
+        Run:
+        Observe:
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of done
+      description: List the observable result, tests, and non-regressions needed to close the ticket.
+      placeholder: |
+        - the reproduction now ...
+        - the comparison path does not regress
+        - the relevant tests pass
+    validations:
+      required: true
