@@ -242,7 +242,7 @@ func (a *Array2D[T]) Close() error {
 	if a.closed {
 		return nil
 	}
-	if err := a.ctx.doWait(context.Background(), func() error {
+	if err := a.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.ArrayDestroy(a.ctx.driver, a.handle)
 	}); err != nil {
 		return err
@@ -329,7 +329,7 @@ func (t *Texture) Close() error {
 	if t.closed {
 		return nil
 	}
-	if err := t.ctx.doWait(context.Background(), func() error {
+	if err := t.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.TexObjectDestroy(t.ctx.driver, t.handle)
 	}); err != nil {
 		return err

@@ -196,7 +196,7 @@ func (s *Stream) Close() error {
 	if s.closed {
 		return nil
 	}
-	if err := s.ctx.doWait(context.Background(), func() error {
+	if err := s.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.StreamDestroy(s.ctx.driver, s.raw)
 	}); err != nil {
 		return err

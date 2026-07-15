@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestRealBlockedSynchronizeLeavesCommandsFree(t *testing.T) {
+func TestRealBlockedSynchronizeLeavesCommandsAndSetupFree(t *testing.T) {
 	initOrSkip(t)
 	dev, err := GetDevice(0)
 	if err != nil {
@@ -65,7 +65,28 @@ func TestRealBlockedSynchronizeLeavesCommandsFree(t *testing.T) {
 		unblock()
 		t.Fatal("MemInfo blocked behind stream synchronization")
 	}
+	type eventResult struct {
+		event *Event
+		err   error
+	}
+	eventDone := make(chan eventResult, 1)
+	go func() {
+		event, err := ctx.NewEvent()
+		eventDone <- eventResult{event: event, err: err}
+	}()
+	var event *Event
+	select {
+	case result := <-eventDone:
+		if result.err != nil {
+			t.Fatalf("NewEvent: %v", result.err)
+		}
+		event = result.event
+	case <-time.After(2 * time.Second):
+		unblock()
+		t.Fatal("NewEvent blocked behind stream synchronization")
+	}
 	unblock()
+	t.Cleanup(func() { _ = event.Close() })
 	select {
 	case err := <-syncDone:
 		if err != nil {
@@ -73,5 +94,8 @@ func TestRealBlockedSynchronizeLeavesCommandsFree(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Synchronize did not finish")
+	}
+	if err := event.Close(); err != nil {
+		t.Fatalf("Event.Close: %v", err)
 	}
 }

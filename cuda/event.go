@@ -203,7 +203,7 @@ func (e *Event) Close() error {
 	if e.closed {
 		return nil
 	}
-	if err := e.ctx.doWait(context.Background(), func() error {
+	if err := e.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.EventDestroy(e.ctx.driver, e.raw)
 	}); err != nil {
 		return err

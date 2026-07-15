@@ -156,7 +156,7 @@ func (b *Buffer[T]) Close() error {
 	if b.closed {
 		return nil
 	}
-	if err := b.ctx.doWait(context.Background(), func() error {
+	if err := b.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.MemFree(b.ctx.driver, b.ptr)
 	}); err != nil {
 		return err
@@ -192,7 +192,7 @@ func (b *Buffer[T]) FreeAsync(stream *Stream) error {
 	if stream.ctx != b.ctx {
 		return ErrContextMismatch
 	}
-	if err := b.ctx.doWait(context.Background(), func() error {
+	if err := b.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.MemFreeAsync(b.ctx.driver, b.ptr, stream.raw)
 	}); err != nil {
 		return err

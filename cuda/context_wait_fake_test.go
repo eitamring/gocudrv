@@ -185,7 +185,7 @@ func TestPreCanceledSynchronizeDoesNotCreateExecutor(t *testing.T) {
 	}
 }
 
-func TestDoWaitChecksCancellationBeforeBarrier(t *testing.T) {
+func TestDoBarrierChecksCancellationFirst(t *testing.T) {
 	var calls waitLaneCalls
 	driver := waitLaneDriver(&calls)
 	entered := make(chan struct{})
@@ -206,14 +206,14 @@ func TestDoWaitChecksCancellationBeforeBarrier(t *testing.T) {
 	waitCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 	ran := atomic.Bool{}
-	if err := ctx.doWait(waitCtx, func() error {
+	if err := ctx.doBarrier(waitCtx, func() error {
 		ran.Store(true)
 		return nil
 	}); !errors.Is(err, context.Canceled) {
-		t.Fatalf("doWait = %v, want context.Canceled", err)
+		t.Fatalf("doBarrier = %v, want context.Canceled", err)
 	}
 	if ran.Load() {
-		t.Fatal("canceled doWait command ran")
+		t.Fatal("canceled barrier command ran")
 	}
 	unblock()
 	if err := waitError(t, syncDone, "context synchronize completion"); err != nil {
@@ -221,7 +221,7 @@ func TestDoWaitChecksCancellationBeforeBarrier(t *testing.T) {
 	}
 }
 
-func TestDoWaitCancellationAbandonsAcceptedBarrier(t *testing.T) {
+func TestDoBarrierCancellationAbandonsAcceptedWait(t *testing.T) {
 	var calls waitLaneCalls
 	driver := waitLaneDriver(&calls)
 	entered := make(chan struct{})
@@ -245,16 +245,16 @@ func TestDoWaitCancellationAbandonsAcceptedBarrier(t *testing.T) {
 	started := make(chan struct{})
 	go func() {
 		close(started)
-		waitDone <- ctx.doWait(waitCtx, func() error {
+		waitDone <- ctx.doBarrier(waitCtx, func() error {
 			ran.Store(true)
 			return nil
 		})
 	}()
-	waitSignal(t, started, "doWait start")
+	waitSignal(t, started, "doBarrier start")
 	time.Sleep(20 * time.Millisecond)
 	cancel()
-	if err := waitError(t, waitDone, "canceled doWait"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("doWait = %v, want context.Canceled", err)
+	if err := waitError(t, waitDone, "canceled doBarrier"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("doBarrier = %v, want context.Canceled", err)
 	}
 	if ran.Load() {
 		t.Fatal("command behind canceled barrier ran")
@@ -265,7 +265,7 @@ func TestDoWaitCancellationAbandonsAcceptedBarrier(t *testing.T) {
 	}
 }
 
-func TestDoWaitSkipsIdleSyncExecutor(t *testing.T) {
+func TestDoBarrierSkipsIdleSyncExecutor(t *testing.T) {
 	var calls waitLaneCalls
 	ctx := newTestContext(t, waitLaneDriver(&calls))
 	if err := ctx.Synchronize(context.Background()); err != nil {
@@ -294,10 +294,10 @@ func TestDoWaitSkipsIdleSyncExecutor(t *testing.T) {
 	waitSignal(t, entered, "idle sync executor task")
 	commandDone := make(chan error, 1)
 	go func() {
-		commandDone <- ctx.doWait(context.Background(), func() error { return nil })
+		commandDone <- ctx.doBarrier(context.Background(), func() error { return nil })
 	}()
 	if err := waitError(t, commandDone, "strict command"); err != nil {
-		t.Fatalf("doWait: %v", err)
+		t.Fatalf("doBarrier: %v", err)
 	}
 	unblock()
 	if err := waitError(t, laneDone, "sync executor task completion"); err != nil {
@@ -368,6 +368,82 @@ func TestSyncExecutorBindFailureCanRetry(t *testing.T) {
 	}
 	if rawAttempts.Load() != 3 {
 		t.Fatalf("raw bind attempts = %d, want 3", rawAttempts.Load())
+	}
+}
+
+func TestSetupContinuesDuringSynchronization(t *testing.T) {
+	type setupResult struct {
+		close func() error
+		err   error
+	}
+	tests := []struct {
+		name  string
+		setup func(*Context) (func() error, error)
+	}{
+		{
+			name: "stream",
+			setup: func(ctx *Context) (func() error, error) {
+				stream, err := ctx.NewStream()
+				if err != nil {
+					return nil, err
+				}
+				return stream.Close, nil
+			},
+		},
+		{
+			name: "event",
+			setup: func(ctx *Context) (func() error, error) {
+				event, err := ctx.NewEvent()
+				if err != nil {
+					return nil, err
+				}
+				return event.Close, nil
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls waitLaneCalls
+			driver := waitLaneDriver(&calls)
+			entered := make(chan struct{})
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			unblock := func() { releaseOnce.Do(func() { close(release) }) }
+			defer unblock()
+			driver.CuCtxSynchronize = func() cudasys.CUresult {
+				close(entered)
+				<-release
+				return cudasys.CUDA_SUCCESS
+			}
+			ctx := newTestContext(t, driver)
+			syncDone := make(chan error, 1)
+			go func() { syncDone <- ctx.Synchronize(context.Background()) }()
+			waitSignal(t, entered, "context synchronize")
+
+			setupDone := make(chan setupResult, 1)
+			go func() {
+				closeResource, err := tc.setup(ctx)
+				setupDone <- setupResult{close: closeResource, err: err}
+			}()
+			var result setupResult
+			select {
+			case result = <-setupDone:
+			case <-time.After(2 * time.Second):
+				t.Fatal("setup blocked behind synchronization")
+			}
+			if result.err != nil {
+				t.Fatalf("setup: %v", result.err)
+			}
+
+			unblock()
+			if err := waitError(t, syncDone, "context synchronize completion"); err != nil {
+				t.Fatalf("Synchronize: %v", err)
+			}
+			if err := result.close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+		})
 	}
 }
 

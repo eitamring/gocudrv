@@ -124,7 +124,7 @@ func (h *HostBuffer[T]) Close() error {
 	if h.closed {
 		return nil
 	}
-	if err := h.ctx.doWait(context.Background(), func() error {
+	if err := h.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.MemFreeHost(h.ctx.driver, h.ptr)
 	}); err != nil {
 		return err

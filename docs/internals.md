@@ -301,6 +301,12 @@ a synchronization call waits for GPU work. Accepted waits are tracked until
 the driver call returns so resource teardown and `Context.Close` can drain and
 unbind the wait executor safely.
 
+Setup calls still wait for their own command to finish when they return a new
+handle or keep Go memory alive, but they do not drain the synchronization
+executor first. The synchronization barrier is reserved for close and free
+paths that could otherwise destroy a resource while a canceled driver wait is
+still using it.
+
 Dispatch latency: waking a parked goroutine across the pinned thread is
 expensive (about 100 microseconds on WSL2, sub-microsecond when neither side
 parks), so both sides of the handoff spin for a bounded window before parking.

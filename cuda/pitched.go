@@ -228,7 +228,7 @@ func (b *PitchedBuffer[T]) Close() error {
 	if b.closed {
 		return nil
 	}
-	if err := b.ctx.doWait(context.Background(), func() error {
+	if err := b.ctx.doBarrier(context.Background(), func() error {
 		return cudaresult.MemFree(b.ctx.driver, b.ptr)
 	}); err != nil {
 		return err
