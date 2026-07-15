@@ -293,13 +293,13 @@ caller goroutine -- exec.DoCtx(ctx, fn) --> task channel --> pinned thread
                                                                  | runs fn
 ```
 
-Each `Context` starts one command executor. `Context.Synchronize`,
-`Stream.Synchronize`, and `Event.Synchronize` lazily start a second executor
-for blocking driver waits, with the same primary context current on both OS
-threads. Queries, launches, and copy submissions can therefore continue while
-a synchronization call waits for GPU work. Accepted waits are tracked until
-the driver call returns so resource teardown and `Context.Close` can drain and
-unbind the wait executor safely.
+Each `Context` starts one command executor. Synchronous memory copies lazily
+start a copy executor, while `Context.Synchronize`, `Stream.Synchronize`, and
+`Event.Synchronize` lazily start a wait executor. All of them keep the same
+primary context current on their pinned OS threads. A blocking copy or wait
+therefore does not stop unrelated queries, launches, or async submissions.
+Accepted waits are tracked until the driver call returns so resource teardown
+and `Context.Close` can drain and unbind the wait executor safely.
 
 Setup calls still wait for their own command to finish when they return a new
 handle or keep Go memory alive, but they do not drain the synchronization
@@ -333,10 +333,13 @@ not block when the caller has walked away. An atomic ownership handoff lets
 whichever side finishes second drain and recycle the channel, including after
 cancellation.
 
-Synchronous memory copies use a stricter executor path: cancellation can stop
-submission, but once a copy is submitted the caller waits until it finishes.
-This prevents callers from mutating or reusing Go host slices while CUDA is
-still reading or writing them.
+Synchronous memory copies use the dedicated copy executor with strict wait
+semantics: cancellation can stop submission, but once a copy is submitted the
+caller waits until it finishes. This prevents callers from mutating or reusing
+Go host slices while CUDA is still reading or writing them. Buffer and pinned
+host-memory read locks stay held for the same interval, so close and free calls
+cannot overtake the copy. `Context.Close` drains and unbinds the copy executor
+before releasing the primary context.
 
 Async pinned-memory copies also use the strict submit path, but only wait until
 `cuMemcpy*Async` returns. That keeps stream and buffer handles stable while the

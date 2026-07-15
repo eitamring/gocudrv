@@ -113,7 +113,7 @@ func (b *Buffer[T]) CopyToPeer(ctx context.Context, dst *Buffer[T]) error {
 	bytes := b.bytes
 	dstPtr, dstCtx := dst.ptr, dst.ctx.raw
 	srcPtr, srcCtx := b.ptr, b.ctx.raw
-	return b.ctx.doWait(ctx, func() error {
+	return b.ctx.doCopyWait(ctx, func() error {
 		return cudaresult.MemcpyPeer(b.ctx.driver, dstPtr, dstCtx, srcPtr, srcCtx, bytes)
 	})
 }

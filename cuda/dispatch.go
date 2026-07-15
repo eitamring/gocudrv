@@ -81,11 +81,17 @@ func (o *memOp) recycle() {
 	memOpPool.Put(o)
 }
 
-// run submits o to the context executor (wait semantics) and recycles it. doJob
-// only returns after the executor is done with o, so recycling here is safe.
+// run submits synchronous copies to the copy executor and every other memory
+// operation to the command executor, then recycles o after the driver returns.
 func (c *Context) run(ctx context.Context, o *memOp) error {
 	o.driver = c.driver
-	err := c.doJob(ctx, o)
+	var err error
+	switch o.kind {
+	case opHtoD, opDtoH, opDtoD:
+		err = c.doCopyJob(ctx, o)
+	default:
+		err = c.doJob(ctx, o)
+	}
 	o.recycle()
 	return err
 }
@@ -219,7 +225,7 @@ var memcpy2DOpPool = sync.Pool{New: func() any { return new(memcpy2DOp) }}
 func (c *Context) memcpy2D(ctx context.Context, desc *cudasys.Memcpy2D) error {
 	o := memcpy2DOpPool.Get().(*memcpy2DOp)
 	o.driver, o.desc = c.driver, *desc
-	err := c.doJob(ctx, o)
+	err := c.doCopyJob(ctx, o)
 	o.desc = cudasys.Memcpy2D{}
 	memcpy2DOpPool.Put(o)
 	return err
@@ -237,7 +243,7 @@ var memcpy3DOpPool = sync.Pool{New: func() any { return new(memcpy3DOp) }}
 func (c *Context) memcpy3D(ctx context.Context, desc *cudasys.Memcpy3D) error {
 	o := memcpy3DOpPool.Get().(*memcpy3DOp)
 	o.driver, o.desc = c.driver, *desc
-	err := c.doJob(ctx, o)
+	err := c.doCopyJob(ctx, o)
 	o.desc = cudasys.Memcpy3D{}
 	memcpy3DOpPool.Put(o)
 	return err
