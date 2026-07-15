@@ -14,8 +14,17 @@ import (
 
 type launchFake struct {
 	launchCalls    atomic.Int32
-	params         []unsafe.Pointer
+	params         launchParams
 	expectedStream cudasys.CUstream
+	captureParams  bool
+}
+
+type launchParams struct {
+	ptr cudasys.CUdeviceptr
+	i32 int32
+	u32 uint32
+	f32 float32
+	f64 float64
 }
 
 func (l *launchFake) driver(t testing.TB) *cudasys.Driver {
@@ -74,7 +83,16 @@ func (l *launchFake) driver(t testing.TB) *cudasys.Driver {
 			if extra != nil {
 				t.Errorf("extra = %p, want nil", extra)
 			}
-			l.params = append([]unsafe.Pointer(nil), unsafe.Slice(params, 5)...)
+			if l.captureParams {
+				p := unsafe.Slice(params, 5)
+				l.params = launchParams{
+					ptr: *(*cudasys.CUdeviceptr)(p[0]),
+					i32: *(*int32)(p[1]),
+					u32: *(*uint32)(p[2]),
+					f32: *(*float32)(p[3]),
+					f64: *(*float64)(p[4]),
+				}
+			}
 			return cudasys.CUDA_SUCCESS
 		},
 	}
@@ -82,9 +100,13 @@ func (l *launchFake) driver(t testing.TB) *cudasys.Driver {
 
 func BenchmarkFunctionLaunch(b *testing.B) {
 	var l launchFake
+	drv := l.driver(b)
+	drv.CuLaunchKernel = func(cudasys.CUfunction, uint32, uint32, uint32, uint32, uint32, uint32, uint32, cudasys.CUstream, *unsafe.Pointer, *unsafe.Pointer) cudasys.CUresult {
+		return cudasys.CUDA_SUCCESS
+	}
 	resetDriver()
 	mu.Lock()
-	driver = l.driver(b)
+	driver = drv
 	mu.Unlock()
 	b.Cleanup(resetDriver)
 	dev, _ := GetDevice(0)
@@ -107,6 +129,36 @@ func BenchmarkFunctionLaunch(b *testing.B) {
 			ArgValue(uint32(i)),
 			ArgValue(float32(i)),
 		); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkFunctionLaunchPreparedArgs(b *testing.B) {
+	var l launchFake
+	drv := l.driver(b)
+	drv.CuLaunchKernel = func(cudasys.CUfunction, uint32, uint32, uint32, uint32, uint32, uint32, uint32, cudasys.CUstream, *unsafe.Pointer, *unsafe.Pointer) cudasys.CUresult {
+		return cudasys.CUDA_SUCCESS
+	}
+	resetDriver()
+	mu.Lock()
+	driver = drv
+	mu.Unlock()
+	b.Cleanup(resetDriver)
+	dev, _ := GetDevice(0)
+	ctx, _ := dev.Primary()
+	b.Cleanup(func() { _ = ctx.Close() })
+	mod, _ := ctx.LoadModule([]byte{'P', 0})
+	b.Cleanup(func() { _ = mod.Close() })
+	fn, _ := mod.Function("k")
+	buf, _ := Alloc[float32](ctx, 4)
+	b.Cleanup(func() { _ = buf.Close() })
+	cfg := LaunchConfig1D(1024, 256)
+	args := []KernelArg{Arg(buf), ArgValue(int32(1)), ArgValue(uint32(2)), ArgValue(float32(3))}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := fn.Launch(context.Background(), cfg, args...); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -164,7 +216,7 @@ func TestLaunchConfig1D(t *testing.T) {
 }
 
 func TestFunctionLaunchPacksArgs(t *testing.T) {
-	var l launchFake
+	l := launchFake{captureParams: true}
 	installDriver(t, l.driver(t))
 	dev, _ := GetDevice(0)
 	ctx, _ := dev.Primary()
@@ -190,19 +242,19 @@ func TestFunctionLaunchPacksArgs(t *testing.T) {
 	if l.launchCalls.Load() != 1 {
 		t.Fatalf("launch calls = %d, want 1", l.launchCalls.Load())
 	}
-	if got := *(*cudasys.CUdeviceptr)(l.params[0]); got != 0xDEAD {
+	if got := l.params.ptr; got != 0xDEAD {
 		t.Errorf("arg0 = %#x, want 0xDEAD", got)
 	}
-	if got := *(*int32)(l.params[1]); got != -3 {
+	if got := l.params.i32; got != -3 {
 		t.Errorf("arg1 = %d, want -3", got)
 	}
-	if got := *(*uint32)(l.params[2]); got != 7 {
+	if got := l.params.u32; got != 7 {
 		t.Errorf("arg2 = %d, want 7", got)
 	}
-	if got := *(*float32)(l.params[3]); got != 1.5 {
+	if got := l.params.f32; got != 1.5 {
 		t.Errorf("arg3 = %v, want 1.5", got)
 	}
-	if got := *(*float64)(l.params[4]); got != 2.5 {
+	if got := l.params.f64; got != 2.5 {
 		t.Errorf("arg4 = %v, want 2.5", got)
 	}
 }
@@ -319,6 +371,74 @@ func TestFunctionLaunchCanceledBeforeSubmit(t *testing.T) {
 	cancel()
 	if err := fn.Launch(ctx, LaunchConfig1D(1, 1)); !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestFunctionLaunchCanceledAfterSubmitKeepsArgsAlive(t *testing.T) {
+	entered := make(chan struct{})
+	reread := make(chan struct{})
+	observed := make(chan cudasys.CUdeviceptr, 1)
+	finish := make(chan struct{})
+	var rereadOnce, finishOnce sync.Once
+	allowReread := func() { rereadOnce.Do(func() { close(reread) }) }
+	allowFinish := func() { finishOnce.Do(func() { close(finish) }) }
+	defer allowFinish()
+	defer allowReread()
+	drv := (&launchFake{}).driver(t)
+	drv.CuLaunchKernel = func(_ cudasys.CUfunction, _, _, _, _, _, _, _ uint32, _ cudasys.CUstream, params *unsafe.Pointer, _ *unsafe.Pointer) cudasys.CUresult {
+		param := *params
+		close(entered)
+		<-reread
+		observed <- *(*cudasys.CUdeviceptr)(param)
+		<-finish
+		return cudasys.CUDA_SUCCESS
+	}
+	installDriver(t, drv)
+	dev, _ := GetDevice(0)
+	ctx, _ := dev.Primary()
+	t.Cleanup(func() { _ = ctx.Close() })
+	mod, _ := ctx.LoadModule([]byte{'P', 0})
+	t.Cleanup(func() { _ = mod.Close() })
+	fn, _ := mod.Function("k")
+	buf, _ := Alloc[float32](ctx, 4)
+	t.Cleanup(func() { _ = buf.Close() })
+
+	callCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	launchDone := make(chan error, 1)
+	go func() {
+		launchDone <- fn.Launch(callCtx, LaunchConfig1D(1, 1), Arg(buf))
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("launch did not enter driver")
+	}
+	cancel()
+	select {
+	case err := <-launchDone:
+		t.Fatalf("launch returned after cancellation while driver was running: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- buf.Close() }()
+	select {
+	case err := <-closeDone:
+		t.Fatalf("buffer close returned while launch held its argument: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	allowReread()
+	if got := <-observed; got != 0xDEAD {
+		t.Errorf("reread argument = %#x, want 0xDEAD", got)
+	}
+	allowFinish()
+	if err := <-launchDone; err != nil {
+		t.Errorf("Launch: %v", err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Errorf("buffer close: %v", err)
 	}
 }
 
@@ -616,6 +736,48 @@ func TestLaunchManyArgsSpill(t *testing.T) {
 	}
 }
 
+func TestLaunchArgStateReset(t *testing.T) {
+	ctx := &Context{}
+	state := &launchArgState{}
+	state.builder.ctx = ctx
+	state.builder.packed = &state.packed
+	state.builder.snapshot = true
+	var locks [17]sync.RWMutex
+	for i := range locks {
+		locks[i].RLock()
+		state.builder.addLock(&locks[i])
+	}
+	var raw [16]byte
+	if err := ArgRaw(unsafe.Pointer(&raw[0]), len(raw)).appendKernelArg(&state.builder); err != nil {
+		t.Fatalf("append raw arg: %v", err)
+	}
+	state.reset()
+
+	if state.builder.ctx != nil || state.builder.packed != nil {
+		t.Fatal("reset state retained its context or builder")
+	}
+	if state.builder.lockCount != 0 || state.builder.overflowLocks != nil {
+		t.Fatal("reset state retained locks")
+	}
+	for _, held := range state.builder.inlineLocks {
+		if held != nil {
+			t.Fatal("reset state retained an inline lock")
+		}
+	}
+	if state.packed.Len() != 0 || state.packed.Params() != nil {
+		t.Fatal("reset state retained packed arguments")
+	}
+	if state.builder.snapshot {
+		t.Fatal("reset state retained snapshot mode")
+	}
+	for i := range locks {
+		if !locks[i].TryLock() {
+			t.Fatalf("lock %d was not released", i)
+		}
+		locks[i].Unlock()
+	}
+}
+
 func TestLaunchModuleClosed(t *testing.T) {
 	mod, fn, launches, _ := newEscapeFixture(t)
 	if err := mod.Close(); err != nil {
@@ -647,7 +809,7 @@ func TestLaunchModuleCloseRace(t *testing.T) {
 }
 
 func TestLaunchPacked(t *testing.T) {
-	var l launchFake
+	l := launchFake{captureParams: true}
 	installDriver(t, l.driver(t))
 	dev, _ := GetDevice(0)
 	ctx, _ := dev.Primary()
@@ -682,13 +844,13 @@ func TestLaunchPacked(t *testing.T) {
 	if l.launchCalls.Load() != 3 {
 		t.Fatalf("launch calls = %d, want 3", l.launchCalls.Load())
 	}
-	if got := *(*cudasys.CUdeviceptr)(l.params[0]); got != 0xDEAD {
+	if got := l.params.ptr; got != 0xDEAD {
 		t.Errorf("arg0 = %#x, want 0xDEAD", got)
 	}
-	if got := *(*int32)(l.params[1]); got != -3 {
+	if got := l.params.i32; got != -3 {
 		t.Errorf("arg1 = %d, want -3", got)
 	}
-	if got := *(*float64)(l.params[4]); got != 2.5 {
+	if got := l.params.f64; got != 2.5 {
 		t.Errorf("arg4 = %v, want 2.5", got)
 	}
 }

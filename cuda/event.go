@@ -173,8 +173,8 @@ func (e *Event) Elapsed(end *Event) (time.Duration, error) {
 	if e == nil || end == nil {
 		return 0, ErrNilEvent
 	}
-	unlock := lockEvents(e, end)
-	defer unlock()
+	first, second := lockEvents(e, end)
+	defer unlockEvents(first, second)
 	if e.closed || end.closed {
 		return 0, ErrEventClosed
 	}
@@ -184,15 +184,7 @@ func (e *Event) Elapsed(end *Event) (time.Duration, error) {
 	if e.ctx != end.ctx {
 		return 0, ErrContextMismatch
 	}
-	var ms float32
-	err := e.ctx.doWait(context.Background(), func() error {
-		v, err := cudaresult.EventElapsedTime(e.ctx.driver, e.raw, end.raw)
-		if err != nil {
-			return err
-		}
-		ms = v
-		return nil
-	})
+	ms, err := e.ctx.eventElapsed(e.raw, end.raw)
 	if err != nil {
 		return 0, err
 	}
@@ -220,20 +212,26 @@ func (e *Event) Close() error {
 	return nil
 }
 
-func lockEvents(a, b *Event) func() {
+func lockEvents(a, b *Event) (first, second *Event) {
 	if a == b {
 		a.opMu.RLock()
-		return a.opMu.RUnlock
+		return a, nil
 	}
 	// Lock by address so concurrent a.Elapsed(b) and b.Elapsed(a) cannot deadlock.
-	first, second := a, b
+	first, second = a, b
 	if uintptr(unsafe.Pointer(first)) > uintptr(unsafe.Pointer(second)) {
 		first, second = second, first
 	}
 	first.opMu.RLock()
 	second.opMu.RLock()
-	return func() {
-		second.opMu.RUnlock()
+	return first, second
+}
+
+func unlockEvents(first, second *Event) {
+	if second == nil {
 		first.opMu.RUnlock()
+		return
 	}
+	second.opMu.RUnlock()
+	first.opMu.RUnlock()
 }
