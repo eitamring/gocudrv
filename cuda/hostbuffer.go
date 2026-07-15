@@ -13,9 +13,8 @@ import (
 // owned by a Context. CUDA can DMA directly to and from this memory
 // without going through its internal staging buffer, so transfers are
 // faster than copies from pageable Go slices. Pinned host memory is also
-// recommended for predictable async-copy overlap and best throughput;
-// pageable host memory is still
-// accepted by the async APIs but its behavior is less predictable.
+// required by the asynchronous host-copy APIs and provides predictable
+// overlap and throughput.
 //
 // Lifetime rule: a HostBuffer must be closed before its owning Context
 // is closed. After Close, any slice previously returned by Slice points
@@ -97,6 +96,20 @@ func (h *HostBuffer[T]) Slice() []T {
 		return nil
 	}
 	return unsafe.Slice((*T)(unsafe.Pointer(h.ptr)), h.length)
+}
+
+func (h *HostBuffer[T]) pinnedHost() pinnedHostRef[T] {
+	if h == nil {
+		return pinnedHostRef[T]{}
+	}
+	return pinnedHostRef[T]{
+		ctx:    h.ctx,
+		ptr:    h.ptr,
+		length: h.length,
+		lock:   &h.opMu,
+		closed: &h.closed,
+		owner:  h,
+	}
 }
 
 // Close releases the pinned host memory. Idempotent after a successful

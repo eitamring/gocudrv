@@ -78,6 +78,20 @@ func (r *RegisteredHost[T]) Bytes() uint64 {
 	return r.bytes
 }
 
+func (r *RegisteredHost[T]) pinnedHost() pinnedHostRef[T] {
+	if r == nil {
+		return pinnedHostRef[T]{}
+	}
+	return pinnedHostRef[T]{
+		ctx:    r.ctx,
+		ptr:    r.ptr,
+		length: len(r.mem),
+		lock:   &r.opMu,
+		closed: &r.closed,
+		owner:  r,
+	}
+}
+
 // Close unregisters the host memory. It is safe to call more than once; a failed
 // unregister leaves the registration open so the caller can retry.
 func (r *RegisteredHost[T]) Close() error {

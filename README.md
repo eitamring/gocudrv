@@ -9,9 +9,11 @@ covers initialization, device discovery,
 primary contexts, memory, module loading, kernel launch, explicit streams,
 events, async pinned copies, device memory primitives (memset, typed fill,
 device-to-device copy, free/total query), buffer subrange (offset) copies,
-non-owning buffer views, host memory registration, pitched 2D allocation and
-copies, memory pool access, non-blocking stream polling, module JIT options and
-logs, raw and unsafe kernel arguments, occupancy helpers, device global access, CUDA graph capture, replay, and update, stream-ordered async allocation,
+non-owning buffer views, host memory registration, flat and shaped async copies
+with pinned memory, pitched and volume allocations, CUDA arrays, memory pool
+access, non-blocking stream polling, module JIT options and logs, raw and unsafe
+kernel arguments, occupancy helpers, device global access, CUDA graph capture,
+replay, and update, stream-ordered async allocation,
 JIT linking (cuLink), device diagnostics (PCI bus id, UUID, and more attributes),
 and raw handle accessors for sibling-module integration.
 
@@ -30,7 +32,7 @@ A thin Go wrapper around `libcuda.so.1` / `nvcuda.dll` so a Go program can:
 - launch kernels
 - create and synchronize streams
 - record/query events and wait across streams
-- enqueue async pinned-memory copies
+- enqueue flat and shaped async copies with allocated or registered pinned memory
 
 All without `cgo`, a C compiler, or the CUDA toolkit being installed at build
 time.
@@ -108,17 +110,16 @@ prints GPU elapsed time from CUDA events.
 ## Benchmarks
 
 ```bash
-go test -bench . ./cuda                      # wrapper and executor overhead (no GPU)
-go test -tags cuda_integration -bench . ./cuda  # real bandwidth and launch overhead (needs a GPU)
+go test -bench . ./cuda                         # wrapper and executor overhead (no GPU)
+go test -tags cuda_integration -bench . ./cuda # real bandwidth and GPU latency (needs a GPU)
 ```
 
 The default benchmarks run against a fake driver, so they measure gocudrv's own
-CPU enqueue cost (executor round trip, locking, argument packing). The
-`cuda_integration` benchmarks measure real device-copy bandwidth and launch
-overhead; `BenchmarkRealAsyncPinnedCopy` reports a `gpu-us/op` metric measured
-with CUDA events alongside the wall-time `ns/op`, so the GPU transfer time can
-be read apart from the CPU submit time. None of them need OCR assets or model
-files.
+CPU enqueue costs, including launch latency. The `cuda_integration` benchmarks
+measure real copy bandwidth, small-kernel end-to-end latency, bidirectional copy
+overlap, and memset throughput. GPU benchmarks report event-timed metrics
+alongside wall time so device work can be read apart from CPU submission. None
+of them need model or application assets.
 
 ## Docs
 
@@ -132,30 +133,18 @@ files.
 ## Layout
 
 ```
-cudasys/       raw dynamic symbols, close to C ABI
-cudaresult/    thin wrappers returning Go errors
-cuda/          public Go API
-internal/      dynamic loader, executor, arg packing, platform paths
-examples/      runnable demos
+cuda/          public API, tests, and benchmarks
+cudaresult/    CUDA result-to-error wrappers
+cudasys/       raw Driver API types and dynamic symbols
+internal/      loader, executor, arg packing, platform paths, and host callbacks
+docs/          guides, API reference, and internals
+examples/      runnable examples
 scripts/       build and check helpers
 ```
 
 ## Roadmap
 
-1. dynamic driver loader and `cuInit`
-2. device enumeration
-3. context with pinned executor goroutine
-4. device memory and host/device copies
-5. PTX module loading
-6. kernel launch with arg packing
-7. streams
-8. async host/device copies
-9. events and stream waits
-10. device memory primitives: memset, typed fill, device-to-device copy, free/total query
-11. occupancy helpers and device global access
-12. basic benchmarking: bandwidth, launch latency, overlap, memset throughput
-13. CUDA graph capture and replay
-14. stream-ordered async allocation
+The initial roadmap is complete. Follow-up work is tracked in GitHub issues and small, focused pull requests.
 
 ## License
 
