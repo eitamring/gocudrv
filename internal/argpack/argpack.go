@@ -18,7 +18,8 @@ const spillAlign = 8
 const minArenaCap = 64
 
 // MaxRetainedSpillBytes caps the arena capacity Reset keeps, so pooled
-// builders do not pin unusually large arguments forever.
+// builders do not pin unusually large arguments forever. It is twice the
+// largest single raw argument the cuda layer accepts.
 const MaxRetainedSpillBytes = 8192
 
 var (
