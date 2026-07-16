@@ -138,7 +138,7 @@ func (e *Event) Record(stream *Stream) error {
 
 // Synchronize waits until the event has completed or ctx is canceled.
 // Canceling ctx stops the caller's wait; the underlying CUDA synchronization
-// continues on the context executor.
+// continues on a context-owned wait lane.
 func (e *Event) Synchronize(ctx context.Context) error {
 	if e == nil {
 		return ErrNilEvent

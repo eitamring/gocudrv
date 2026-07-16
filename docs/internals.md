@@ -295,17 +295,26 @@ caller goroutine -- exec.DoCtx(ctx, fn) --> task channel --> pinned thread
 
 Each `Context` starts one command executor. Synchronous memory copies lazily
 start a copy executor, while `Context.Synchronize`, `Stream.Synchronize`, and
-`Event.Synchronize` lazily start a wait executor. All of them keep the same
-primary context current on their pinned OS threads. A blocking copy or wait
-therefore does not stop unrelated queries, launches, or async submissions.
+`Event.Synchronize` run on a small pool of lazily created pinned wait lanes,
+capped at eight per context. Idle lanes are reused; unrelated blocking waits
+take separate lanes and run concurrently, so a slow wait does not add its time
+to another. A canceled wait leaves its lane busy until the driver call returns,
+but new waits use other lanes instead of queuing behind it. Beyond the cap,
+additional concurrent waits share the least loaded lane. The cap of eight is a
+conservative default, not a measured optimum: it covers typical
+concurrent-stream counts, and the cost of a blocked or idle lane is a parked
+OS thread rather than CPU time, so the ceiling exists only to keep a
+pathological wait burst from pinning unbounded threads. All lanes keep the
+same primary context current on their pinned OS threads. A blocking copy or
+wait therefore does not stop unrelated queries, launches, or async submissions.
 Accepted waits are tracked until the driver call returns so resource teardown
-and `Context.Close` can drain and unbind the wait executor safely.
+and `Context.Close` can drain and unbind every lane safely.
 
 Setup calls still wait for their own command to finish when they return a new
-handle or keep Go memory alive, but they do not drain the synchronization
-executor first. The synchronization barrier is reserved for close and free
-paths that could otherwise destroy a resource while a canceled driver wait is
-still using it.
+handle or keep Go memory alive, but they do not drain the wait lanes first. The
+synchronization barrier is reserved for close and free paths that could
+otherwise destroy a resource while a canceled driver wait is still using it; it
+drains every wait lane.
 
 Dispatch latency: waking a parked goroutine across the pinned thread is
 expensive (about 100 microseconds on WSL2, sub-microsecond when neither side
