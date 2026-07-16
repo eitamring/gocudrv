@@ -300,7 +300,11 @@ capped at eight per context. Idle lanes are reused; unrelated blocking waits
 take separate lanes and run concurrently, so a slow wait does not add its time
 to another. A canceled wait leaves its lane busy until the driver call returns,
 but new waits use other lanes instead of queuing behind it. Beyond the cap,
-additional concurrent waits share the least loaded lane. All lanes keep the
+additional concurrent waits share the least loaded lane. The cap of eight is a
+conservative default, not a measured optimum: it covers typical
+concurrent-stream counts, and the cost of a blocked or idle lane is a parked
+OS thread rather than CPU time, so the ceiling exists only to keep a
+pathological wait burst from pinning unbounded threads. All lanes keep the
 same primary context current on their pinned OS threads. A blocking copy or
 wait therefore does not stop unrelated queries, launches, or async submissions.
 Accepted waits are tracked until the driver call returns so resource teardown

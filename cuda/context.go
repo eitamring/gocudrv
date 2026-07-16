@@ -11,8 +11,9 @@ import (
 	"github.com/eitamring/gocudrv/internal/executor"
 )
 
-// maxWaitLanes bounds the pinned wait threads a context can hold. Beyond the
-// cap, additional concurrent waits share the least loaded lane.
+// maxWaitLanes bounds the pinned wait threads a context can hold; beyond the
+// cap, concurrent waits share the least loaded lane. Eight is a conservative
+// default for typical stream counts; a parked lane idles a thread, not CPU.
 const maxWaitLanes = 8
 
 // waitLane is one pinned wait executor plus its in-flight wait count, both
