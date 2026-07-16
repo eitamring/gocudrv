@@ -12,13 +12,15 @@ import (
 )
 
 // Context wraps a CUDA primary context plus a pinned command executor. Blocking
-// synchronization lazily creates a second pinned executor so ordinary commands
-// can continue while the caller waits for GPU work.
+// copies and synchronization lazily create their own pinned executors so
+// ordinary commands can continue while the caller waits for CUDA.
 type Context struct {
 	device     *Device
 	driver     *cudasys.Driver
 	raw        cudasys.CUcontext
 	exec       *executor.Executor
+	copyMu     sync.Mutex
+	copyExec   *executor.Executor
 	syncMu     sync.Mutex
 	syncExec   *executor.Executor
 	syncActive atomic.Int64
@@ -29,8 +31,8 @@ type Context struct {
 
 // Primary retains the primary context on the device and binds it as the
 // current context on a dedicated pinned command thread. The returned Context
-// owns that executor and any lazily created synchronization executor; call
-// Close to release the context and stop them.
+// owns that executor and any lazily created copy or synchronization executor;
+// call Close to release the context and stop them.
 //
 // On failure all partial state (retained context, started executor) is
 // rolled back before returning.
@@ -147,6 +149,33 @@ func (c *Context) doBarrier(ctx context.Context, fn func() error) error {
 	return c.doWith(ctx, fn, true, true)
 }
 
+func (c *Context) newExecutor() (*executor.Executor, error) {
+	candidate := executor.New()
+	if err := candidate.Do(func() error {
+		return cudaresult.CtxSetCurrent(c.driver, c.raw)
+	}); err != nil {
+		candidate.Retire()
+		_ = candidate.Close()
+		return nil, err
+	}
+	return candidate, nil
+}
+
+func (c *Context) copyExecutor() (*executor.Executor, error) {
+	c.copyMu.Lock()
+	defer c.copyMu.Unlock()
+	if c.copyExec != nil {
+		return c.copyExec, nil
+	}
+
+	candidate, err := c.newExecutor()
+	if err != nil {
+		return nil, err
+	}
+	c.copyExec = candidate
+	return candidate, nil
+}
+
 func (c *Context) syncExecutor() (*executor.Executor, error) {
 	c.syncMu.Lock()
 	defer c.syncMu.Unlock()
@@ -154,12 +183,8 @@ func (c *Context) syncExecutor() (*executor.Executor, error) {
 		return c.syncExec, nil
 	}
 
-	candidate := executor.New()
-	if err := candidate.Do(func() error {
-		return cudaresult.CtxSetCurrent(c.driver, c.raw)
-	}); err != nil {
-		candidate.Retire()
-		_ = candidate.Close()
+	candidate, err := c.newExecutor()
+	if err != nil {
 		return nil, err
 	}
 	c.syncExec = candidate
@@ -230,6 +255,65 @@ func (c *Context) doJob(ctx context.Context, j executor.Job) error {
 		return c.commandErr
 	}
 	return c.exec.DoJob(ctx, j)
+}
+
+// doCopyJob runs a caller-recycled copy job on the pinned copy executor. A
+// canceled context can stop submission, but an accepted copy always finishes
+// before this method returns so Go memory remains valid for the driver call.
+func (c *Context) doCopyJob(ctx context.Context, j executor.Job) error {
+	if c == nil {
+		return ErrNilContext
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.opMu.RLock()
+	defer c.opMu.RUnlock()
+	if c.exec == nil {
+		return ErrNilContext
+	}
+	if c.closed.Load() {
+		return ErrContextClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.commandErr != nil {
+		return c.commandErr
+	}
+	lane, err := c.copyExecutor()
+	if err != nil {
+		return err
+	}
+	return lane.DoJob(ctx, j)
+}
+
+func (c *Context) doCopyWait(ctx context.Context, fn func() error) error {
+	if c == nil {
+		return ErrNilContext
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.opMu.RLock()
+	defer c.opMu.RUnlock()
+	if c.exec == nil {
+		return ErrNilContext
+	}
+	if c.closed.Load() {
+		return ErrContextClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.commandErr != nil {
+		return c.commandErr
+	}
+	lane, err := c.copyExecutor()
+	if err != nil {
+		return err
+	}
+	return lane.DoCtxWait(ctx, fn)
 }
 
 // doJobCtx runs a pooled Job on the synchronization executor. The job must be
@@ -315,6 +399,21 @@ func (c *Context) closeSyncExecutor() error {
 		return nil
 	}
 
+	return c.closeExecutor(lane)
+}
+
+func (c *Context) closeCopyExecutor() error {
+	c.copyMu.Lock()
+	lane := c.copyExec
+	c.copyExec = nil
+	c.copyMu.Unlock()
+	if lane == nil {
+		return nil
+	}
+	return c.closeExecutor(lane)
+}
+
+func (c *Context) closeExecutor(lane *executor.Executor) error {
 	clearErr := lane.Do(func() error {
 		return cudaresult.CtxSetCurrent(c.driver, 0)
 	})
@@ -342,10 +441,11 @@ func (c *Context) recoverCommandExecutor() error {
 	return nil
 }
 
-// Close releases the primary context retain and stops both executors. After a
-// successful Close, all Context methods return ErrContextClosed and further
-// Close calls return nil. If releasing the primary context fails the retain
-// count was not dropped, so the Context stays open for Close to be retried.
+// Close releases the primary context retain and stops every started executor.
+// After a successful Close, all Context methods return ErrContextClosed and
+// further Close calls return nil. If releasing the primary context fails the
+// retain count was not dropped, so the Context stays open for Close to be
+// retried.
 func (c *Context) Close() error {
 	if c == nil || c.device == nil {
 		return ErrNilContext
@@ -363,6 +463,7 @@ func (c *Context) Close() error {
 	}
 
 	syncErr := c.closeSyncExecutor()
+	copyErr := c.closeCopyExecutor()
 	var clearErr, releaseErr, restoreErr error
 	if err := c.exec.Do(func() error {
 		clearErr = cudaresult.CtxSetCurrent(c.driver, 0)
@@ -372,7 +473,7 @@ func (c *Context) Close() error {
 		}
 		return nil
 	}); err != nil {
-		return errors.Join(syncErr, err)
+		return errors.Join(syncErr, copyErr, err)
 	}
 	if releaseErr != nil {
 		if restoreErr != nil {
@@ -380,11 +481,11 @@ func (c *Context) Close() error {
 			c.exec.Retire()
 			_ = c.exec.Close()
 		}
-		return errors.Join(syncErr, clearErr, releaseErr, restoreErr)
+		return errors.Join(syncErr, copyErr, clearErr, releaseErr, restoreErr)
 	}
 	c.closed.Store(true)
 	if clearErr != nil {
 		c.exec.Retire()
 	}
-	return errors.Join(syncErr, clearErr, c.exec.Close())
+	return errors.Join(syncErr, copyErr, clearErr, c.exec.Close())
 }

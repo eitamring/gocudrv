@@ -98,9 +98,10 @@ Pass `cuda.DeviceAttribute(value)` for CUDA attributes not yet named.
 ## contexts
 
 A `Context` wraps the device's primary context and a pinned command executor.
-Synchronization calls use a second executor created on first use, so a long
-GPU wait does not stop queries, launches, or copy submissions. Both executors
-bind the same context on their pinned threads.
+Synchronous copies and synchronization calls use separate executors created on
+first use. A long copy or GPU wait therefore does not stop unrelated queries,
+launches, or async submissions. Every executor binds the same context on its
+pinned thread.
 
 ```go
 dev, _ := cuda.GetDevice(0)
@@ -117,7 +118,7 @@ if err := ctx.Synchronize(context.Background()); err != nil {
 
 - `(*Device).Primary() (*Context, error)` retains the primary context and
   starts the command executor. Rolls back retain and stops the executor on
-  failure. The synchronization executor starts lazily.
+  failure. The copy and synchronization executors start lazily.
 - `(*Context).Device() *Device` returns the device this context was created
   on.
 - `(*Context).StreamPriorityRange() (least, greatest int, err error)` returns
@@ -130,7 +131,7 @@ if err := ctx.Synchronize(context.Background()); err != nil {
 - `(*Context).MemInfo() (free, total uint64, err error)` returns the free and
   total device memory in bytes. The values reflect the whole device, not just
   this context.
-- `(*Context).Close() error` drains both executors and releases the
+- `(*Context).Close() error` drains all started executors and releases the
   primary-context retain. It is idempotent after success. A failed release
   leaves the context open and retryable. Methods called after a successful
   `Close` return `ErrContextClosed`.
