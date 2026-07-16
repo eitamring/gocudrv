@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eitamring/gocudrv/cudasys"
+	"github.com/eitamring/gocudrv/internal/executor"
 )
 
 type waitLaneCalls struct {
@@ -96,10 +97,10 @@ func waitLaneDriver(c *waitLaneCalls) *cudasys.Driver {
 	}
 }
 
-func hasSyncExecutor(c *Context) bool {
+func waitLaneCount(c *Context) int {
 	c.syncMu.Lock()
 	defer c.syncMu.Unlock()
-	return c.syncExec != nil
+	return len(c.waitLanes)
 }
 
 func commandFailure(c *Context) error {
@@ -141,8 +142,8 @@ func TestSyncExecutorIsLazy(t *testing.T) {
 	var calls waitLaneCalls
 	ctx := newTestContext(t, waitLaneDriver(&calls))
 
-	if hasSyncExecutor(ctx) {
-		t.Fatal("sync executor exists before first synchronization")
+	if waitLaneCount(ctx) != 0 {
+		t.Fatal("wait lane exists before first synchronization")
 	}
 	free, total, err := ctx.MemInfo()
 	if err != nil {
@@ -151,8 +152,8 @@ func TestSyncExecutorIsLazy(t *testing.T) {
 	if free != 2048 || total != 8192 {
 		t.Fatalf("MemInfo = (%d, %d), want (2048, 8192)", free, total)
 	}
-	if hasSyncExecutor(ctx) {
-		t.Fatal("ordinary command created the sync executor")
+	if waitLaneCount(ctx) != 0 {
+		t.Fatal("ordinary command created a wait lane")
 	}
 	if err := ctx.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -171,8 +172,8 @@ func TestPreCanceledSynchronizeDoesNotCreateExecutor(t *testing.T) {
 	if err := ctx.Synchronize(waitCtx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Synchronize = %v, want context.Canceled", err)
 	}
-	if hasSyncExecutor(ctx) {
-		t.Fatal("pre-canceled synchronization created the sync executor")
+	if waitLaneCount(ctx) != 0 {
+		t.Fatal("pre-canceled synchronization created a wait lane")
 	}
 	if calls.contextSyncs.Load() != 0 {
 		t.Fatalf("context sync calls = %d, want 0", calls.contextSyncs.Load())
@@ -272,10 +273,13 @@ func TestDoBarrierSkipsIdleSyncExecutor(t *testing.T) {
 		t.Fatalf("Synchronize: %v", err)
 	}
 	ctx.syncMu.Lock()
-	lane := ctx.syncExec
+	var lane *executor.Executor
+	if len(ctx.waitLanes) > 0 {
+		lane = ctx.waitLanes[0].exec
+	}
 	ctx.syncMu.Unlock()
 	if lane == nil {
-		t.Fatal("sync executor was not created")
+		t.Fatal("wait lane was not created")
 	}
 
 	entered := make(chan struct{})
@@ -305,31 +309,165 @@ func TestDoBarrierSkipsIdleSyncExecutor(t *testing.T) {
 	}
 }
 
-func TestConcurrentSynchronizeCreatesOneExecutor(t *testing.T) {
+func TestBlockedWaitDoesNotDelayUnrelatedWait(t *testing.T) {
 	var calls waitLaneCalls
-	ctx := newTestContext(t, waitLaneDriver(&calls))
-	const n = 32
-	errs := make(chan error, n)
-	var wg sync.WaitGroup
-	wg.Add(n)
-	for range n {
-		go func() {
-			defer wg.Done()
-			errs <- ctx.Synchronize(context.Background())
-		}()
+	driver := waitLaneDriver(&calls)
+	var nextStream atomic.Uint64
+	driver.CuStreamCreate = func(stream *cudasys.CUstream, _ uint32) cudasys.CUresult {
+		*stream = cudasys.CUstream(nextStream.Add(1))
+		return cudasys.CUDA_SUCCESS
 	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	var blockHandle cudasys.CUstream
+	driver.CuStreamSynchronize = func(stream cudasys.CUstream) cudasys.CUresult {
+		calls.streamSyncs.Add(1)
+		if stream == blockHandle {
+			close(entered)
+			<-release
+		}
+		return cudasys.CUDA_SUCCESS
+	}
+	ctx := newTestContext(t, driver)
+	streamA, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream A: %v", err)
+	}
+	t.Cleanup(func() { _ = streamA.Close() })
+	streamB, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream B: %v", err)
+	}
+	t.Cleanup(func() { _ = streamB.Close() })
+	blockHandle = streamA.raw
+
+	syncA := make(chan error, 1)
+	go func() { syncA <- streamA.Synchronize(context.Background()) }()
+	waitSignal(t, entered, "stream A synchronize")
+
+	syncB := make(chan error, 1)
+	go func() { syncB <- streamB.Synchronize(context.Background()) }()
+	if err := waitError(t, syncB, "stream B synchronize"); err != nil {
+		t.Fatalf("Synchronize B: %v", err)
+	}
+	assertPending(t, syncA, "stream A synchronize")
+
+	unblock()
+	if err := waitError(t, syncA, "stream A synchronize completion"); err != nil {
+		t.Fatalf("Synchronize A: %v", err)
+	}
+}
+
+func TestCanceledWaitDoesNotDelayNewWaits(t *testing.T) {
+	var calls waitLaneCalls
+	driver := waitLaneDriver(&calls)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	driver.CuCtxSynchronize = func() cudasys.CUresult {
+		calls.contextSyncs.Add(1)
+		close(entered)
+		<-release
+		return cudasys.CUDA_SUCCESS
+	}
+	ctx := newTestContext(t, driver)
+	stream, err := ctx.NewStream()
+	if err != nil {
+		t.Fatalf("NewStream: %v", err)
+	}
+	t.Cleanup(func() { _ = stream.Close() })
+
+	waitCtx, cancel := context.WithCancel(context.Background())
+	syncDone := make(chan error, 1)
+	go func() { syncDone <- ctx.Synchronize(waitCtx) }()
+	waitSignal(t, entered, "context synchronize")
+	cancel()
+	if err := waitError(t, syncDone, "canceled context synchronize"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Synchronize = %v, want context.Canceled", err)
+	}
+
+	streamDone := make(chan error, 1)
+	go func() { streamDone <- stream.Synchronize(context.Background()) }()
+	if err := waitError(t, streamDone, "stream synchronize"); err != nil {
+		t.Fatalf("stream Synchronize: %v", err)
+	}
+
+	unblock()
+	if err := ctx.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestWaitLanesCapAndReuse(t *testing.T) {
+	var calls waitLaneCalls
+	driver := waitLaneDriver(&calls)
+	entered := make(chan struct{}, maxWaitLanes+2)
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	driver.CuCtxSynchronize = func() cudasys.CUresult {
+		calls.contextSyncs.Add(1)
+		entered <- struct{}{}
+		<-release
+		return cudasys.CUDA_SUCCESS
+	}
+	ctx := newTestContext(t, driver)
+
+	waits := make(chan error, maxWaitLanes+1)
+	for range maxWaitLanes {
+		go func() { waits <- ctx.Synchronize(context.Background()) }()
+	}
+	for i := 0; i < maxWaitLanes; i++ {
+		waitSignal(t, entered, "wait lane entry")
+	}
+	if got := waitLaneCount(ctx); got != maxWaitLanes {
+		t.Fatalf("wait lanes = %d, want %d", got, maxWaitLanes)
+	}
+
+	go func() { waits <- ctx.Synchronize(context.Background()) }()
+	select {
+	case <-entered:
+		t.Fatal("overflow wait entered the driver instead of queuing on a lane")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if got := waitLaneCount(ctx); got != maxWaitLanes {
+		t.Fatalf("wait lanes after overflow = %d, want %d", got, maxWaitLanes)
+	}
+
+	unblock()
+	for i := 0; i < maxWaitLanes+1; i++ {
+		if err := waitError(t, waits, "capped wait"); err != nil {
 			t.Fatalf("Synchronize: %v", err)
 		}
 	}
-	if calls.rawBinds.Load() != 2 {
-		t.Fatalf("raw context binds = %d, want 2", calls.rawBinds.Load())
+	if err := ctx.Synchronize(context.Background()); err != nil {
+		t.Fatalf("final Synchronize: %v", err)
 	}
-	if calls.contextSyncs.Load() != n {
-		t.Fatalf("context sync calls = %d, want %d", calls.contextSyncs.Load(), n)
+	if got := waitLaneCount(ctx); got != maxWaitLanes {
+		t.Fatalf("wait lanes after drain = %d, want %d", got, maxWaitLanes)
+	}
+}
+
+func TestSequentialWaitsReuseOneLane(t *testing.T) {
+	var calls waitLaneCalls
+	ctx := newTestContext(t, waitLaneDriver(&calls))
+	if err := ctx.Synchronize(context.Background()); err != nil {
+		t.Fatalf("first Synchronize: %v", err)
+	}
+	if err := ctx.Synchronize(context.Background()); err != nil {
+		t.Fatalf("second Synchronize: %v", err)
+	}
+	if got := waitLaneCount(ctx); got != 1 {
+		t.Fatalf("wait lanes = %d, want 1", got)
+	}
+	if got := calls.rawBinds.Load(); got != 2 {
+		t.Fatalf("raw context binds = %d, want 2", got)
 	}
 }
 
@@ -354,8 +492,8 @@ func TestSyncExecutorBindFailureCanRetry(t *testing.T) {
 	if err := ctx.Synchronize(context.Background()); !errors.Is(err, ErrInvalidContext) {
 		t.Fatalf("first Synchronize = %v, want ErrInvalidContext", err)
 	}
-	if hasSyncExecutor(ctx) {
-		t.Fatal("failed bind stored a sync executor")
+	if waitLaneCount(ctx) != 0 {
+		t.Fatal("failed bind stored a wait lane")
 	}
 	if calls.contextSyncs.Load() != 0 {
 		t.Fatalf("context sync calls = %d, want 0", calls.contextSyncs.Load())
@@ -363,8 +501,8 @@ func TestSyncExecutorBindFailureCanRetry(t *testing.T) {
 	if err := ctx.Synchronize(context.Background()); err != nil {
 		t.Fatalf("retry Synchronize: %v", err)
 	}
-	if !hasSyncExecutor(ctx) {
-		t.Fatal("successful retry did not store a sync executor")
+	if waitLaneCount(ctx) != 1 {
+		t.Fatalf("wait lanes after successful retry = %d, want 1", waitLaneCount(ctx))
 	}
 	if rawAttempts.Load() != 3 {
 		t.Fatalf("raw bind attempts = %d, want 3", rawAttempts.Load())
@@ -764,8 +902,8 @@ func TestReleaseFailureRestoresContext(t *testing.T) {
 	if commandFailure(ctx) != nil {
 		t.Fatalf("command executor quarantined after successful restore: %v", commandFailure(ctx))
 	}
-	if hasSyncExecutor(ctx) {
-		t.Fatal("sync executor retained after failed Close")
+	if waitLaneCount(ctx) != 0 {
+		t.Fatal("wait lane retained after failed Close")
 	}
 	if _, _, err := ctx.MemInfo(); err != nil {
 		t.Fatalf("MemInfo after failed Close: %v", err)

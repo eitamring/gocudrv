@@ -11,27 +11,40 @@ import (
 	"github.com/eitamring/gocudrv/internal/executor"
 )
 
+// maxWaitLanes bounds the pinned wait threads a context can hold. Beyond the
+// cap, additional concurrent waits share the least loaded lane.
+const maxWaitLanes = 8
+
+// waitLane is one pinned wait executor plus its in-flight wait count, both
+// guarded by Context.syncMu.
+type waitLane struct {
+	exec    *executor.Executor
+	pending int
+}
+
 // Context wraps a CUDA primary context plus a pinned command executor. Blocking
-// copies and synchronization lazily create their own pinned executors so
-// ordinary commands can continue while the caller waits for CUDA.
+// copies lazily create their own pinned executor and synchronization uses a
+// small pool of lazily created wait lanes, so ordinary commands can continue
+// while the caller waits for CUDA.
 type Context struct {
-	device     *Device
-	driver     *cudasys.Driver
-	raw        cudasys.CUcontext
-	exec       *executor.Executor
-	copyMu     sync.Mutex
-	copyExec   *executor.Executor
-	syncMu     sync.Mutex
-	syncExec   *executor.Executor
-	syncActive atomic.Int64
-	commandErr error
-	opMu       sync.RWMutex
-	closed     atomic.Bool
+	device       *Device
+	driver       *cudasys.Driver
+	raw          cudasys.CUcontext
+	exec         *executor.Executor
+	copyMu       sync.Mutex
+	copyExec     *executor.Executor
+	syncMu       sync.Mutex
+	laneCreateMu sync.Mutex
+	waitLanes    []*waitLane
+	syncActive   atomic.Int64
+	commandErr   error
+	opMu         sync.RWMutex
+	closed       atomic.Bool
 }
 
 // Primary retains the primary context on the device and binds it as the
 // current context on a dedicated pinned command thread. The returned Context
-// owns that executor and any lazily created copy or synchronization executor;
+// owns that executor and any lazily created copy executor or wait lanes;
 // call Close to release the context and stop them.
 //
 // On failure all partial state (retained context, started executor) is
@@ -176,19 +189,67 @@ func (c *Context) copyExecutor() (*executor.Executor, error) {
 	return candidate, nil
 }
 
-func (c *Context) syncExecutor() (*executor.Executor, error) {
-	c.syncMu.Lock()
-	defer c.syncMu.Unlock()
-	if c.syncExec != nil {
-		return c.syncExec, nil
+// acquireWaitLane reuses an existing lane when it can and otherwise creates
+// one under laneCreateMu, so a stalled lane bind never blocks lane release,
+// the barrier, or close.
+func (c *Context) acquireWaitLane() (*waitLane, error) {
+	if lane := c.reuseWaitLane(); lane != nil {
+		return lane, nil
 	}
-
-	candidate, err := c.newExecutor()
+	c.laneCreateMu.Lock()
+	defer c.laneCreateMu.Unlock()
+	if lane := c.reuseWaitLane(); lane != nil {
+		return lane, nil
+	}
+	exec, err := c.newExecutor()
 	if err != nil {
 		return nil, err
 	}
-	c.syncExec = candidate
-	return candidate, nil
+	c.syncMu.Lock()
+	lane := &waitLane{exec: exec, pending: 1}
+	c.waitLanes = append(c.waitLanes, lane)
+	c.syncMu.Unlock()
+	return lane, nil
+}
+
+// reuseWaitLane claims an idle lane, or the least loaded lane once the pool
+// is at maxWaitLanes. It returns nil when a new lane should be created.
+func (c *Context) reuseWaitLane() *waitLane {
+	c.syncMu.Lock()
+	defer c.syncMu.Unlock()
+	lane := c.idleWaitLane()
+	if lane == nil && len(c.waitLanes) >= maxWaitLanes {
+		lane = c.leastLoadedWaitLane()
+	}
+	if lane != nil {
+		lane.pending++
+	}
+	return lane
+}
+
+func (c *Context) idleWaitLane() *waitLane {
+	for _, lane := range c.waitLanes {
+		if lane.pending == 0 {
+			return lane
+		}
+	}
+	return nil
+}
+
+func (c *Context) leastLoadedWaitLane() *waitLane {
+	chosen := c.waitLanes[0]
+	for _, lane := range c.waitLanes[1:] {
+		if lane.pending < chosen.pending {
+			chosen = lane
+		}
+	}
+	return chosen
+}
+
+func (c *Context) releaseWaitLane(lane *waitLane) {
+	c.syncMu.Lock()
+	lane.pending--
+	c.syncMu.Unlock()
 }
 
 func (c *Context) syncBarrier(ctx context.Context) error {
@@ -196,19 +257,25 @@ func (c *Context) syncBarrier(ctx context.Context) error {
 		return nil
 	}
 	c.syncMu.Lock()
-	lane := c.syncExec
-	c.syncMu.Unlock()
-	if lane == nil {
-		return nil
+	lanes := make([]*executor.Executor, len(c.waitLanes))
+	for i, lane := range c.waitLanes {
+		lanes[i] = lane.exec
 	}
-	return lane.DoCtx(ctx, syncBarrierNoop)
+	c.syncMu.Unlock()
+	for _, lane := range lanes {
+		if err := lane.DoCtx(ctx, syncBarrierNoop); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func syncBarrierNoop() error { return nil }
 
 type trackedSyncJob struct {
-	ctx *Context
-	job executor.Job
+	ctx  *Context
+	job  executor.Job
+	lane *waitLane
 }
 
 func (j *trackedSyncJob) Run() error {
@@ -216,9 +283,10 @@ func (j *trackedSyncJob) Run() error {
 }
 
 func (j *trackedSyncJob) Recycle() {
-	ctx, job := j.ctx, j.job
+	ctx, job, lane := j.ctx, j.job, j.lane
 	*j = trackedSyncJob{}
 	executor.RecycleJob(job)
+	ctx.releaseWaitLane(lane)
 	ctx.syncActive.Add(-1)
 	trackedSyncJobPool.Put(j)
 }
@@ -316,7 +384,7 @@ func (c *Context) doCopyWait(ctx context.Context, fn func() error) error {
 	return lane.DoCtxWait(ctx, fn)
 }
 
-// doJobCtx runs a pooled Job on the synchronization executor. The job must be
+// doJobCtx runs a pooled Job on an acquired wait lane. The job must be
 // executor-recycled (implement Recycle), never pooled by the caller.
 func (c *Context) doJobCtx(ctx context.Context, j executor.Job) error {
 	if c == nil {
@@ -344,15 +412,15 @@ func (c *Context) doJobCtx(ctx context.Context, j executor.Job) error {
 		executor.RecycleJob(j)
 		return c.commandErr
 	}
-	lane, err := c.syncExecutor()
+	lane, err := c.acquireWaitLane()
 	if err != nil {
 		executor.RecycleJob(j)
 		return err
 	}
 	tracked := trackedSyncJobPool.Get().(*trackedSyncJob)
-	tracked.ctx, tracked.job = c, j
+	tracked.ctx, tracked.job, tracked.lane = c, j, lane
 	c.syncActive.Add(1)
-	return lane.DoJobCtx(ctx, tracked)
+	return lane.exec.DoJobCtx(ctx, tracked)
 }
 
 func (c *Context) doWith(ctx context.Context, fn func() error, waitAfterSubmit, barrierBeforeSubmit bool) error {
@@ -390,16 +458,16 @@ func (c *Context) doWith(ctx context.Context, fn func() error, waitAfterSubmit, 
 	return c.exec.DoCtx(ctx, fn)
 }
 
-func (c *Context) closeSyncExecutor() error {
+func (c *Context) closeWaitLanes() error {
 	c.syncMu.Lock()
-	lane := c.syncExec
-	c.syncExec = nil
+	lanes := c.waitLanes
+	c.waitLanes = nil
 	c.syncMu.Unlock()
-	if lane == nil {
-		return nil
+	var err error
+	for _, lane := range lanes {
+		err = errors.Join(err, c.closeExecutor(lane.exec))
 	}
-
-	return c.closeExecutor(lane)
+	return err
 }
 
 func (c *Context) closeCopyExecutor() error {
@@ -462,7 +530,7 @@ func (c *Context) Close() error {
 		return err
 	}
 
-	syncErr := c.closeSyncExecutor()
+	syncErr := c.closeWaitLanes()
 	copyErr := c.closeCopyExecutor()
 	var clearErr, releaseErr, restoreErr error
 	if err := c.exec.Do(func() error {

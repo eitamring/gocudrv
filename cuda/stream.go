@@ -116,7 +116,7 @@ func (c *Context) NewStream(options ...StreamOption) (*Stream, error) {
 
 // Synchronize waits until all preceding work in the stream has completed or
 // ctx is canceled. Canceling ctx stops the caller's wait; queued GPU work and
-// the underlying CUDA synchronization continue on the executor thread.
+// the underlying CUDA synchronization continue on a context-owned wait lane.
 func (s *Stream) Synchronize(ctx context.Context) error {
 	if s == nil {
 		return ErrNilStream

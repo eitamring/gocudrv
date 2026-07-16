@@ -98,10 +98,11 @@ Pass `cuda.DeviceAttribute(value)` for CUDA attributes not yet named.
 ## contexts
 
 A `Context` wraps the device's primary context and a pinned command executor.
-Synchronous copies and synchronization calls use separate executors created on
-first use. A long copy or GPU wait therefore does not stop unrelated queries,
-launches, or async submissions. Every executor binds the same context on its
-pinned thread.
+Synchronous copies use a separate executor created on first use, and
+synchronization calls run on a small pool of wait lanes created on demand, so
+unrelated waits do not queue behind each other. A long copy or GPU wait
+therefore does not stop unrelated queries, launches, or async submissions.
+Every executor binds the same context on its pinned thread.
 
 ```go
 dev, _ := cuda.GetDevice(0)
@@ -118,7 +119,7 @@ if err := ctx.Synchronize(context.Background()); err != nil {
 
 - `(*Device).Primary() (*Context, error)` retains the primary context and
   starts the command executor. Rolls back retain and stops the executor on
-  failure. The copy and synchronization executors start lazily.
+  failure. The copy executor and the wait lanes start lazily.
 - `(*Context).Device() *Device` returns the device this context was created
   on.
 - `(*Context).StreamPriorityRange() (least, greatest int, err error)` returns
@@ -142,8 +143,10 @@ Nil `*Context` methods return `ErrNilContext` when they return an error, and
 `Primary` and `Close` do not take a `context.Context`: they mutate
 ownership state and partial completion would leak retain counts. Methods
 that only wait (`Synchronize` and stream synchronization) take
-`context.Context`. Canceling a wait does not occupy the command executor, but
-resource cleanup still waits for the accepted driver wait to finish.
+`context.Context`. Waits run on a small pool of wait lanes, so unrelated waits
+do not queue behind each other. Canceling a wait does not occupy the command
+executor, but resource cleanup still waits for the accepted driver wait to
+finish.
 
 ## memory
 
@@ -726,8 +729,9 @@ stream.
 
 Canceling `Stream.Synchronize` only stops the caller's wait. It does not stop
 the queued GPU work or the underlying CUDA synchronization already running on
-the synchronization executor. Command submissions and queries on the context
-can continue, while a later `Stream.Close` still waits for that accepted wait.
+its wait lane. That lane stays busy until the driver returns, but other waits
+use separate lanes. Command submissions and queries on the context can
+continue, while a later `Stream.Close` still waits for that accepted wait.
 
 ### polling and timing
 

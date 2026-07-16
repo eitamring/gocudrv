@@ -4,6 +4,8 @@ package cuda
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -23,6 +25,61 @@ func benchRealContext(b *testing.B) *Context {
 	}
 	b.Cleanup(func() { _ = ctx.Close() })
 	return ctx
+}
+
+// BenchmarkRealTwoStreamWait parks one wait lane inside the driver on stream A
+// via a blocking host function, then measures repeated stream B synchronizes to
+// confirm an unrelated wait does not queue behind the parked lane.
+func BenchmarkRealTwoStreamWait(b *testing.B) {
+	ctx := benchRealContext(b)
+	streamA, err := ctx.NewStream()
+	if err != nil {
+		b.Fatalf("NewStream A: %v", err)
+	}
+	b.Cleanup(func() { _ = streamA.Close() })
+	streamB, err := ctx.NewStream()
+	if err != nil {
+		b.Fatalf("NewStream B: %v", err)
+	}
+	b.Cleanup(func() { _ = streamB.Close() })
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	b.Cleanup(unblock)
+	err = streamA.LaunchHostFunc(func() {
+		close(entered)
+		<-release
+	})
+	if errors.Is(err, ErrSymbolUnavailable) {
+		b.Skip("driver lacks cuLaunchHostFunc")
+	}
+	if err != nil {
+		b.Fatalf("LaunchHostFunc: %v", err)
+	}
+	syncA := make(chan error, 1)
+	go func() { syncA <- streamA.Synchronize(context.Background()) }()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		b.Fatal("host function did not start")
+	}
+	waitForActiveSyncs(b, ctx, 1)
+
+	bg := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := streamB.Synchronize(bg); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+
+	unblock()
+	if err := <-syncA; err != nil {
+		b.Fatalf("Synchronize A: %v", err)
+	}
 }
 
 const benchCopyElems = 1 << 20 // 4 MiB of float32
