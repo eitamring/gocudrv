@@ -20,7 +20,9 @@ func TestMain(m *testing.M) {
 	if !preflight() {
 		os.Exit(0)
 	}
-	goleak.VerifyTestMain(m)
+	goleak.VerifyTestMain(m,
+		goleak.IgnoreAnyFunction("github.com/eitamring/gocudrv/internal/executor.quarantineThread"),
+	)
 }
 
 func resetDriver() {

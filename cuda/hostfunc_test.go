@@ -1,7 +1,10 @@
 package cuda
 
 import (
+	"context"
 	"errors"
+	"os"
+	"os/exec"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -44,6 +47,22 @@ func TestLaunchHostFuncRunsThroughDriverCallback(t *testing.T) {
 	}
 	if !ran.Load() {
 		t.Fatal("host function never ran through the driver-style callback")
+	}
+}
+
+func TestRetiredThreadAfterDriverCallback(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0],
+		"-test.run=^(TestCopyExecutorBindFailureCanRetry|TestLaunchHostFuncRunsThroughDriverCallback)$",
+		"-test.count=100",
+	)
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("repeated callback and retire timed out: %v", ctx.Err())
+	}
+	if err != nil {
+		t.Fatalf("repeated callback and retire: %v\n%s", err, out)
 	}
 }
 
