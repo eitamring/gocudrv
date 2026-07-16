@@ -102,11 +102,9 @@ func recycleCompletion(c *completion) {
 }
 
 // Executor runs functions on a single OS thread. Construct one per CUDA
-// context so that "current context" stays stable across calls. When Close stops
-// the goroutine it unlocks the thread back to the scheduler instead of retiring
-// it: terminating a thread that holds CUDA driver TLS can crash the driver.
-// Retire opts back into termination for a thread whose state could not be
-// cleared.
+// context so that "current context" stays stable across calls. Close normally
+// unlocks the thread for reuse. Retire keeps an unclean thread locked and
+// parked for the rest of the process so it is neither reused nor terminated.
 type Executor struct {
 	tasks     chan task
 	quit      chan struct{}
@@ -155,12 +153,7 @@ func New() *Executor {
 
 func (e *Executor) run() {
 	runtime.LockOSThread()
-	defer close(e.done)
-	defer func() {
-		if !e.retire.Load() {
-			runtime.UnlockOSThread()
-		}
-	}()
+	defer e.finishThread()
 	spin := 0
 	yieldEvery := multiPSpinYieldEvery
 	for {
@@ -194,6 +187,19 @@ func (e *Executor) run() {
 	}
 }
 
+func (e *Executor) finishThread() {
+	if e.retire.Load() {
+		// Let Close return before parking the locked thread for good.
+		close(e.done)
+		quarantineThread()
+	}
+	runtime.UnlockOSThread()
+	close(e.done)
+}
+
+// quarantineThread deliberately owns its locked OS thread until process exit.
+func quarantineThread() { select {} }
+
 func (e *Executor) runTask(t task) {
 	err := e.runOne(t.job)
 	RecycleJob(t.job)
@@ -225,9 +231,9 @@ func (e *Executor) drain() {
 	}
 }
 
-// Retire marks the executor's thread as unclean, so Close terminates it instead
-// of unlocking it back to the scheduler. Call it when foreign thread-local
-// state could not be cleared and must not leak to other goroutines.
+// Retire marks the executor's thread as unclean. Close then quarantines the
+// locked thread for the rest of the process instead of terminating or reusing
+// it. Call it only when foreign thread-local state could not be cleared.
 func (e *Executor) Retire() {
 	e.retire.Store(true)
 }
@@ -370,9 +376,10 @@ func (e *Executor) DoJob(ctx context.Context, j Job) error {
 	return err
 }
 
-// Close stops the executor goroutine and waits for it to exit, including
-// any task that is currently running. Idempotent; the first call's error
-// (if any) is returned on every subsequent call.
+// Close stops accepting work and waits for every accepted task to finish. A
+// clean worker exits; a retired worker signals completion and then stays
+// quarantined. Idempotent; the first call's error (if any) is returned on every
+// subsequent call.
 func (e *Executor) Close() error {
 	e.closeOnce.Do(func() {
 		e.mu.Lock()

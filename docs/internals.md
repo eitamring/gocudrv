@@ -320,11 +320,13 @@ and worker can alternate. An idle executor parks and burns nothing. Accepted
 tasks are drained before the executor honors `Close`, so a task that reached
 the buffered channel always runs.
 
-When `Close` stops the goroutine, the thread is unlocked back to the Go
-scheduler rather than terminated: the CUDA driver keeps thread-local state, and
-terminating a thread that held it can crash the driver (observed on WSL2). An
-executor whose current-context unbind fails is retired so the unclean thread
-exits instead of hosting other goroutines.
+When `Close` stops a clean executor, its thread is unlocked back to the Go
+scheduler. If clearing foreign thread-local state fails, unlocking would let an
+unrelated goroutine inherit that state, but terminating the thread can crash
+after a CUDA or `purego` callback crossing. `Retire` therefore quarantines the
+locked thread: `Close` returns, while one dormant goroutine and OS thread stay
+parked until the process exits. This cost exists only on the failed cleanup
+path.
 
 `DoCtx` accepts a `context.Context`. Cancellation stops the wait, not the
 GPU work; the function still runs to completion on the executor thread and

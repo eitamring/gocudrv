@@ -13,7 +13,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	goleak.VerifyTestMain(m,
+		goleak.IgnoreAnyFunction("github.com/eitamring/gocudrv/internal/executor.quarantineThread"),
+	)
 }
 
 func TestDo(t *testing.T) {
