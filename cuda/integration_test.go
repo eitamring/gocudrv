@@ -1156,3 +1156,106 @@ func TestRealLinkerBadPTX(t *testing.T) {
 		t.Logf("JIT link error log: %s", lk.Log().Error)
 	}
 }
+
+func TestRealLaunchPackedSet(t *testing.T) {
+	initOrSkip(t)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+
+	const n = 8
+	const sentinel = float32(-1)
+	aHost := make([]float32, n)
+	bHost := make([]float32, n)
+	out := make([]float32, n)
+	for i := range aHost {
+		aHost[i] = 1
+		bHost[i] = 2
+		out[i] = sentinel
+	}
+	bufA, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc a: %v", err)
+	}
+	t.Cleanup(func() { _ = bufA.Close() })
+	bufB, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc b: %v", err)
+	}
+	t.Cleanup(func() { _ = bufB.Close() })
+	bufOut, err := Alloc[float32](ctx, n)
+	if err != nil {
+		t.Fatalf("Alloc out: %v", err)
+	}
+	t.Cleanup(func() { _ = bufOut.Close() })
+
+	bg := context.Background()
+	if err := bufA.CopyFrom(bg, aHost); err != nil {
+		t.Fatalf("CopyFrom a: %v", err)
+	}
+	if err := bufB.CopyFrom(bg, bHost); err != nil {
+		t.Fatalf("CopyFrom b: %v", err)
+	}
+	if err := bufOut.CopyFrom(bg, out); err != nil {
+		t.Fatalf("CopyFrom out: %v", err)
+	}
+
+	mod, err := ctx.LoadModuleFromFile("testdata/vector_add.ptx")
+	if err != nil {
+		t.Fatalf("LoadModuleFromFile: %v", err)
+	}
+	t.Cleanup(func() { _ = mod.Close() })
+	fn, err := mod.Function("vector_add")
+	if err != nil {
+		t.Fatalf("Function: %v", err)
+	}
+
+	p, err := Pack(Arg(bufA), Arg(bufB), Arg(bufOut), ArgValue(int32(4)))
+	if err != nil {
+		t.Fatalf("Pack: %v", err)
+	}
+	cfg := LaunchConfig1D(n, n)
+	if err := fn.LaunchPacked(bg, cfg, p); err != nil {
+		t.Fatalf("LaunchPacked n=4: %v", err)
+	}
+	if err := ctx.Synchronize(bg); err != nil {
+		t.Fatalf("Synchronize: %v", err)
+	}
+	if err := bufOut.CopyTo(bg, out); err != nil {
+		t.Fatalf("CopyTo: %v", err)
+	}
+	for i := 0; i < 4; i++ {
+		if out[i] != 3 {
+			t.Errorf("out[%d] = %v, want 3 after n=4 launch", i, out[i])
+		}
+	}
+	for i := 4; i < n; i++ {
+		if out[i] != sentinel {
+			t.Errorf("out[%d] = %v, want sentinel after n=4 launch", i, out[i])
+		}
+	}
+
+	if err := SetPacked(p, 3, int32(n)); err != nil {
+		t.Fatalf("SetPacked: %v", err)
+	}
+	if err := fn.LaunchPacked(bg, cfg, p); err != nil {
+		t.Fatalf("LaunchPacked n=8: %v", err)
+	}
+	if err := ctx.Synchronize(bg); err != nil {
+		t.Fatalf("Synchronize 2: %v", err)
+	}
+	if err := bufOut.CopyTo(bg, out); err != nil {
+		t.Fatalf("CopyTo 2: %v", err)
+	}
+	for i := range out {
+		if out[i] != 3 {
+			t.Errorf("out[%d] = %v, want 3 after n=8 launch", i, out[i])
+		}
+	}
+}

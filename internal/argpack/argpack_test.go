@@ -1,6 +1,7 @@
 package argpack
 
 import (
+	"errors"
 	"testing"
 	"unsafe"
 )
@@ -164,6 +165,172 @@ func TestAddBytesSpill(t *testing.T) {
 	for i := range data {
 		if got[i] != data[i] {
 			t.Fatalf("byte[%d] = %d, want %d", i, got[i], data[i])
+		}
+	}
+	b.KeepAlive()
+}
+
+func TestSetUpdatesValues(t *testing.T) {
+	var b Builder
+	Add(&b, int32(7))
+	var big [16]byte
+	big[0] = 0xA1
+	Add(&b, big)
+	for i := 0; i < inlineArgs; i++ {
+		Add(&b, uint64(100+i))
+	}
+	params := unsafe.Slice(b.Params(), b.Len())
+	before := make([]unsafe.Pointer, len(params))
+	copy(before, params)
+
+	if err := Set(&b, 0, int32(42)); err != nil {
+		t.Fatalf("Set inline: %v", err)
+	}
+	var newBig [16]byte
+	newBig[0] = 0xB2
+	if err := Set(&b, 1, newBig); err != nil {
+		t.Fatalf("Set arena: %v", err)
+	}
+	if err := Set(&b, 2+inlineArgs-1, uint64(999)); err != nil {
+		t.Fatalf("Set overflow arg: %v", err)
+	}
+
+	after := unsafe.Slice(b.Params(), b.Len())
+	for i := range before {
+		if before[i] != after[i] {
+			t.Fatalf("param pointer %d moved after Set", i)
+		}
+	}
+	if got := *(*int32)(after[0]); got != 42 {
+		t.Errorf("arg0 = %d, want 42", got)
+	}
+	if got := unsafe.Slice((*byte)(after[1]), 16); got[0] != 0xB2 {
+		t.Errorf("arg1 first byte = %#x, want 0xB2", got[0])
+	}
+	if got := *(*uint64)(after[len(after)-1]); got != 999 {
+		t.Errorf("last arg = %d, want 999", got)
+	}
+	b.KeepAlive()
+}
+
+func TestSetRejects(t *testing.T) {
+	var b Builder
+	Add(&b, int32(7))
+	AddBytes(&b, []byte{1, 2, 3, 4})
+	if err := Set(&b, -1, int32(0)); !errors.Is(err, ErrIndexOutOfRange) {
+		t.Errorf("Set(-1) = %v, want ErrIndexOutOfRange", err)
+	}
+	if err := Set(&b, 2, int32(0)); !errors.Is(err, ErrIndexOutOfRange) {
+		t.Errorf("Set(len) = %v, want ErrIndexOutOfRange", err)
+	}
+	if err := Set(&b, 0, float32(1)); !errors.Is(err, ErrTypeMismatch) {
+		t.Errorf("Set float32 on int32 = %v, want ErrTypeMismatch", err)
+	}
+	if err := Set(&b, 0, int64(1)); !errors.Is(err, ErrTypeMismatch) {
+		t.Errorf("Set int64 on int32 = %v, want ErrTypeMismatch", err)
+	}
+	if err := Set(&b, 1, int32(1)); !errors.Is(err, ErrTypeMismatch) {
+		t.Errorf("Set on raw slot = %v, want ErrTypeMismatch", err)
+	}
+}
+
+func TestSetBytes(t *testing.T) {
+	var b Builder
+	Add(&b, int32(7))
+	raw := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+	AddBytes(&b, raw)
+	if err := b.SetBytes(0, []byte{0xEF, 0xBE, 0xAD, 0xDE}); err != nil {
+		t.Fatalf("SetBytes on typed slot: %v", err)
+	}
+	next := []byte{12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
+	if err := b.SetBytes(1, next); err != nil {
+		t.Fatalf("SetBytes on raw slot: %v", err)
+	}
+	if err := b.SetBytes(1, []byte{1}); !errors.Is(err, ErrSizeMismatch) {
+		t.Errorf("SetBytes wrong size = %v, want ErrSizeMismatch", err)
+	}
+	if err := b.SetBytes(9, next); !errors.Is(err, ErrIndexOutOfRange) {
+		t.Errorf("SetBytes bad index = %v, want ErrIndexOutOfRange", err)
+	}
+	params := unsafe.Slice(b.Params(), b.Len())
+	if got := *(*uint32)(params[0]); got != 0xDEADBEEF {
+		t.Errorf("arg0 = %#x, want 0xDEADBEEF", got)
+	}
+	got := unsafe.Slice((*byte)(params[1]), len(next))
+	for i := range next {
+		if got[i] != next[i] {
+			t.Fatalf("raw byte[%d] = %d, want %d", i, got[i], next[i])
+		}
+	}
+	b.KeepAlive()
+}
+
+func TestResetReusesArena(t *testing.T) {
+	var b Builder
+	pack := func() {
+		for i := 0; i < inlineArgs+4; i++ {
+			Add(&b, uint64(i))
+		}
+		AddBytes(&b, make([]byte, 32))
+		if b.Params() == nil {
+			t.Fatal("Params returned nil")
+		}
+		b.Reset()
+	}
+	pack()
+	if allocs := testing.AllocsPerRun(100, pack); allocs != 0 {
+		t.Errorf("repack allocs = %v, want 0", allocs)
+	}
+}
+
+func TestResetDropsOversizedArena(t *testing.T) {
+	var b Builder
+	for i := 0; i < 3; i++ {
+		AddBytes(&b, make([]byte, 4096))
+	}
+	if b.Params() == nil {
+		t.Fatal("Params returned nil")
+	}
+	b.Reset()
+	if b.spillBuf != nil || b.spillPointers != nil {
+		t.Fatal("oversized arena retained after Reset")
+	}
+	Add(&b, int32(5))
+	if got := *(*int32)(unsafe.Slice(b.Params(), 1)[0]); got != 5 {
+		t.Fatalf("arg0 after drop = %d, want 5", got)
+	}
+}
+
+func TestArenaPointerAlignment(t *testing.T) {
+	var b Builder
+	for i := 0; i < inlineArgs; i++ {
+		Add(&b, uint64(i))
+	}
+	for _, n := range []int{3, 9, 17} {
+		AddBytes(&b, make([]byte, n))
+	}
+	params := unsafe.Slice(b.Params(), b.Len())
+	for i := inlineArgs; i < len(params); i++ {
+		if uintptr(params[i])%8 != 0 {
+			t.Errorf("arena arg %d pointer %% 8 = %d, want 0", i, uintptr(params[i])%8)
+		}
+	}
+	b.KeepAlive()
+}
+
+func TestArenaGrowthKeepsValues(t *testing.T) {
+	var b Builder
+	var want [40][16]byte
+	for i := range want {
+		want[i][0] = byte(i + 1)
+		want[i][15] = byte(0xF0 + i%16)
+		Add(&b, want[i])
+	}
+	params := unsafe.Slice(b.Params(), b.Len())
+	for i := range want {
+		got := unsafe.Slice((*byte)(params[i]), 16)
+		if got[0] != want[i][0] || got[15] != want[i][15] {
+			t.Errorf("arg%d = [%#x..%#x], want [%#x..%#x]", i, got[0], got[15], want[i][0], want[i][15])
 		}
 	}
 	b.KeepAlive()

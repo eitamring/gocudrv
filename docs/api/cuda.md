@@ -1022,6 +1022,31 @@ for step := 0; step < steps; step++ {
   lifetime, like `ArgDevicePtr`.
 - `(*Function).LaunchPacked(ctx, cfg, p)` and `LaunchPackedOn(ctx, stream, cfg, p)`
   launch with a pre-packed list and allocate nothing per launch.
+- `SetPacked[T](p, i, v)` updates packed argument `i` in place without
+  allocating, so a loop whose scalar changes every launch stays allocation
+  free. The value must have the exact type argument `i` was packed with;
+  `errors.Is` sentinels report a bad index (`ErrArgIndexOutOfRange`), type
+  (`ErrArgTypeMismatch`), or size (`ErrArgSizeMismatch`).
+- `SetPackedBuffer[T](p, i, buf)` repoints a device-pointer argument at
+  another buffer with `Pack`'s snapshot semantics, and
+  `(*PackedArgs).SetDevicePtr(i, ptr)` does the same for a raw pointer.
+- `(*PackedArgs).SetRaw(i, value, size)` overwrites argument `i` from raw
+  bytes of the same size. It checks size, not type, so it is also the escape
+  hatch for reinterpreting a slot.
+- Updates and launches must not run concurrently on one `PackedArgs`; update
+  between launches, as with the buffer lifetime rules below.
+
+```go
+p, _ := cuda.Pack(cuda.Arg(buf), cuda.ArgValue(int32(0)))
+for i := range frames {
+    if err := cuda.SetPacked(p, 1, int32(i)); err != nil {
+        return err
+    }
+    if err := fn.LaunchPacked(context.Background(), cfg, p); err != nil {
+        return err
+    }
+}
+```
 
 **Lifetime rule:** a `PackedArgs` captures device pointers and texture and
 surface handles, so keep every referenced `Buffer`, `Texture`, and `Surface`
@@ -1315,8 +1340,11 @@ Go-side sentinels:
 - `ErrStreamClosed`: a method was called on a `*Stream` after `Close`.
 - `ErrInvalidStreamPriority`: `WithStreamPriority` received a value that cannot fit in CUDA's C `int` priority parameter.
 - `ErrInvalidLaunchConfig`: `Function.Launch` or `LaunchOn` was given zero grid or block dimensions.
-- `ErrNilKernelArg`: `Function.Launch` or `LaunchOn` was given a nil `KernelArg`.
+- `ErrNilKernelArg`: `Function.Launch` or `LaunchOn` was given a nil `KernelArg`, or a packed-argument update was given a nil `PackedArgs`, buffer value, or raw pointer.
 - `ErrInvalidArgSize`: a raw kernel argument had an unsupported size.
+- `ErrArgIndexOutOfRange`: a packed-argument update named an index outside the packed list.
+- `ErrArgTypeMismatch`: `SetPacked`, `SetPackedBuffer`, or `SetDevicePtr` targeted a slot packed with a different type.
+- `ErrArgSizeMismatch`: `PackedArgs.SetRaw` was given bytes of a different size than the packed slot.
 - `ErrContextMismatch`: a kernel argument or stream belongs to a different context from the function.
 - `ErrUnsupportedFillType`: `Buffer.Fill` or `FillAsync` was called on an 8-byte element type, which the driver has no memset for.
 - `ErrInvalidBlockSize`: an occupancy query was given a block size that is not positive or does not fit CUDA's C `int`.

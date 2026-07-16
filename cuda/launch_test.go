@@ -919,3 +919,230 @@ func BenchmarkLaunchPacked(b *testing.B) {
 		}
 	}
 }
+
+func TestLaunchPackedSetDeliversNewValues(t *testing.T) {
+	type observed struct {
+		ptr cudasys.CUdeviceptr
+		n   int32
+		raw [2]uint64
+	}
+	var seen []observed
+	var l launchFake
+	drv := l.driver(t)
+	var nextPtr atomic.Uint64
+	drv.CuMemAlloc = func(p *cudasys.CUdeviceptr, _ uint64) cudasys.CUresult {
+		*p = cudasys.CUdeviceptr(0x1000 * nextPtr.Add(1))
+		return cudasys.CUDA_SUCCESS
+	}
+	drv.CuLaunchKernel = func(_ cudasys.CUfunction, _, _, _, _, _, _, _ uint32, _ cudasys.CUstream, params *unsafe.Pointer, _ *unsafe.Pointer) cudasys.CUresult {
+		p := unsafe.Slice(params, 3)
+		seen = append(seen, observed{
+			ptr: *(*cudasys.CUdeviceptr)(p[0]),
+			n:   *(*int32)(p[1]),
+			raw: *(*[2]uint64)(p[2]),
+		})
+		return cudasys.CUDA_SUCCESS
+	}
+	installDriver(t, drv)
+	dev, err := GetDevice(0)
+	if err != nil {
+		t.Fatalf("GetDevice: %v", err)
+	}
+	ctx, err := dev.Primary()
+	if err != nil {
+		t.Fatalf("Primary: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.Close() })
+	mod, err := ctx.LoadModule([]byte{'P', 0})
+	if err != nil {
+		t.Fatalf("LoadModule: %v", err)
+	}
+	t.Cleanup(func() { _ = mod.Close() })
+	fn, err := mod.Function("k")
+	if err != nil {
+		t.Fatalf("Function: %v", err)
+	}
+	bufA, err := Alloc[float32](ctx, 8)
+	if err != nil {
+		t.Fatalf("Alloc A: %v", err)
+	}
+	t.Cleanup(func() { _ = bufA.Close() })
+	bufB, err := Alloc[float32](ctx, 8)
+	if err != nil {
+		t.Fatalf("Alloc B: %v", err)
+	}
+	t.Cleanup(func() { _ = bufB.Close() })
+
+	rawVal := [2]uint64{1, 2}
+	p, err := Pack(Arg(bufA), ArgValue(int32(1)), ArgRaw(unsafe.Pointer(&rawVal), 16))
+	if err != nil {
+		t.Fatalf("Pack: %v", err)
+	}
+	cfg := LaunchConfig1D(8, 8)
+	bg := context.Background()
+	if err := fn.LaunchPacked(bg, cfg, p); err != nil {
+		t.Fatalf("launch 1: %v", err)
+	}
+	if err := SetPacked(p, 1, int32(2)); err != nil {
+		t.Fatalf("SetPacked: %v", err)
+	}
+	if err := fn.LaunchPacked(bg, cfg, p); err != nil {
+		t.Fatalf("launch 2: %v", err)
+	}
+	if err := SetPackedBuffer(p, 0, bufB); err != nil {
+		t.Fatalf("SetPackedBuffer: %v", err)
+	}
+	if err := fn.LaunchPacked(bg, cfg, p); err != nil {
+		t.Fatalf("launch 3: %v", err)
+	}
+	if err := p.SetDevicePtr(0, 0xD00D); err != nil {
+		t.Fatalf("SetDevicePtr: %v", err)
+	}
+	newRaw := [2]uint64{3, 4}
+	if err := p.SetRaw(2, unsafe.Pointer(&newRaw), 16); err != nil {
+		t.Fatalf("SetRaw: %v", err)
+	}
+	if err := fn.LaunchPacked(bg, cfg, p); err != nil {
+		t.Fatalf("launch 4: %v", err)
+	}
+
+	if len(seen) != 4 {
+		t.Fatalf("launches = %d, want 4", len(seen))
+	}
+	want := []observed{
+		{ptr: 0x1000, n: 1, raw: [2]uint64{1, 2}},
+		{ptr: 0x1000, n: 2, raw: [2]uint64{1, 2}},
+		{ptr: 0x2000, n: 2, raw: [2]uint64{1, 2}},
+		{ptr: 0xD00D, n: 2, raw: [2]uint64{3, 4}},
+	}
+	for i := range want {
+		if seen[i] != want[i] {
+			t.Errorf("launch %d = %+v, want %+v", i+1, seen[i], want[i])
+		}
+	}
+}
+
+func TestSetPackedRejects(t *testing.T) {
+	ctx, _, _, buf := newLaunchFixture(t)
+	closed, err := Alloc[float32](ctx, 4)
+	if err != nil {
+		t.Fatalf("Alloc closed: %v", err)
+	}
+	if err := closed.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	p, err := Pack(Arg(buf), ArgValue(int32(1)))
+	if err != nil {
+		t.Fatalf("Pack: %v", err)
+	}
+	var nilP *PackedArgs
+	four := int32(0)
+	if err := SetPacked(nilP, 0, int32(1)); !errors.Is(err, ErrNilKernelArg) {
+		t.Errorf("SetPacked nil p = %v, want ErrNilKernelArg", err)
+	}
+	if err := SetPackedBuffer(nilP, 0, buf); !errors.Is(err, ErrNilKernelArg) {
+		t.Errorf("SetPackedBuffer nil p = %v, want ErrNilKernelArg", err)
+	}
+	if err := nilP.SetDevicePtr(0, 0); !errors.Is(err, ErrNilKernelArg) {
+		t.Errorf("SetDevicePtr nil p = %v, want ErrNilKernelArg", err)
+	}
+	if err := nilP.SetRaw(0, unsafe.Pointer(&four), 4); !errors.Is(err, ErrNilKernelArg) {
+		t.Errorf("SetRaw nil p = %v, want ErrNilKernelArg", err)
+	}
+	if err := SetPackedBuffer[float32](p, 0, nil); !errors.Is(err, ErrNilBuffer) {
+		t.Errorf("SetPackedBuffer nil buf = %v, want ErrNilBuffer", err)
+	}
+	if err := SetPackedBuffer(p, 0, closed); !errors.Is(err, ErrBufferClosed) {
+		t.Errorf("SetPackedBuffer closed = %v, want ErrBufferClosed", err)
+	}
+	if err := SetPacked(p, 5, int32(1)); !errors.Is(err, ErrArgIndexOutOfRange) {
+		t.Errorf("SetPacked bad index = %v, want ErrArgIndexOutOfRange", err)
+	}
+	if err := SetPacked(p, 1, float32(1)); !errors.Is(err, ErrArgTypeMismatch) {
+		t.Errorf("SetPacked wrong type = %v, want ErrArgTypeMismatch", err)
+	}
+	if err := p.SetRaw(1, unsafe.Pointer(&four), 8); !errors.Is(err, ErrArgSizeMismatch) {
+		t.Errorf("SetRaw wrong size = %v, want ErrArgSizeMismatch", err)
+	}
+	if err := p.SetRaw(1, unsafe.Pointer(&four), 0); !errors.Is(err, ErrInvalidArgSize) {
+		t.Errorf("SetRaw size 0 = %v, want ErrInvalidArgSize", err)
+	}
+	if err := p.SetRaw(1, unsafe.Pointer(&four), 4097); !errors.Is(err, ErrInvalidArgSize) {
+		t.Errorf("SetRaw size 4097 = %v, want ErrInvalidArgSize", err)
+	}
+	if err := p.SetRaw(1, nil, 4); !errors.Is(err, ErrNilKernelArg) {
+		t.Errorf("SetRaw nil value = %v, want ErrNilKernelArg", err)
+	}
+}
+
+func BenchmarkLaunchPackedSet(b *testing.B) {
+	var l launchFake
+	drv := l.driver(b)
+	drv.CuLaunchKernel = func(cudasys.CUfunction, uint32, uint32, uint32, uint32, uint32, uint32, uint32, cudasys.CUstream, *unsafe.Pointer, *unsafe.Pointer) cudasys.CUresult {
+		return cudasys.CUDA_SUCCESS
+	}
+	resetDriver()
+	mu.Lock()
+	driver = drv
+	mu.Unlock()
+	b.Cleanup(resetDriver)
+	dev, _ := GetDevice(0)
+	ctx, _ := dev.Primary()
+	b.Cleanup(func() { _ = ctx.Close() })
+	mod, _ := ctx.LoadModule([]byte{'P', 0})
+	b.Cleanup(func() { _ = mod.Close() })
+	fn, _ := mod.Function("k")
+	buf, _ := Alloc[float32](ctx, 4)
+	b.Cleanup(func() { _ = buf.Close() })
+	cfg := LaunchConfig1D(1024, 256)
+	cfg.SharedMemBytes = 32
+	p, _ := Pack(Arg(buf), ArgValue(int32(0)))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := SetPacked(p, 1, int32(i)); err != nil {
+			b.Fatal(err)
+		}
+		if err := fn.LaunchPacked(context.Background(), cfg, p); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkLaunchPackedManyArgs(b *testing.B) {
+	var l launchFake
+	drv := l.driver(b)
+	drv.CuLaunchKernel = func(cudasys.CUfunction, uint32, uint32, uint32, uint32, uint32, uint32, uint32, cudasys.CUstream, *unsafe.Pointer, *unsafe.Pointer) cudasys.CUresult {
+		return cudasys.CUDA_SUCCESS
+	}
+	resetDriver()
+	mu.Lock()
+	driver = drv
+	mu.Unlock()
+	b.Cleanup(resetDriver)
+	dev, _ := GetDevice(0)
+	ctx, _ := dev.Primary()
+	b.Cleanup(func() { _ = ctx.Close() })
+	mod, _ := ctx.LoadModule([]byte{'P', 0})
+	b.Cleanup(func() { _ = mod.Close() })
+	fn, _ := mod.Function("k")
+	args := make([]KernelArg, 20)
+	for i := range args {
+		args[i] = ArgValue(int32(i))
+	}
+	p, _ := Pack(args...)
+	cfg := LaunchConfig1D(1024, 256)
+	cfg.SharedMemBytes = 32
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := SetPacked(p, 19, int32(i)); err != nil {
+			b.Fatal(err)
+		}
+		if err := fn.LaunchPacked(context.Background(), cfg, p); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

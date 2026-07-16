@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/eitamring/gocudrv/cudaresult"
+	"github.com/eitamring/gocudrv/internal/argpack"
 )
 
 // Go-side sentinels that signal wrapper-level rejections separate from CUDA
@@ -31,29 +32,34 @@ var (
 	ErrInvalidLaunchConfig   = errors.New("cuda: invalid launch config")
 	ErrNilKernelArg          = errors.New("cuda: nil kernel argument")
 	ErrInvalidArgSize        = errors.New("cuda: invalid raw kernel argument size")
-	ErrContextMismatch       = errors.New("cuda: resource belongs to a different context")
-	ErrUnsupportedFillType   = errors.New("cuda: Fill is unsupported for 8-byte element types")
-	ErrInvalidBlockSize      = errors.New("cuda: block size must be positive")
-	ErrNilGlobal             = errors.New("cuda: nil global")
-	ErrEmptyGlobalName       = errors.New("cuda: empty global name")
-	ErrInvalidGlobalName     = errors.New("cuda: global name contains null byte")
-	ErrNilGraph              = errors.New("cuda: nil graph")
-	ErrGraphClosed           = errors.New("cuda: graph is closed")
-	ErrNilGraphExec          = errors.New("cuda: nil executable graph")
-	ErrGraphExecClosed       = errors.New("cuda: executable graph is closed")
-	ErrNilMemPool            = errors.New("cuda: nil memory pool")
-	ErrNilArray              = errors.New("cuda: nil array")
-	ErrArrayClosed           = errors.New("cuda: array is closed")
-	ErrNilTexture            = errors.New("cuda: nil texture")
-	ErrTextureClosed         = errors.New("cuda: texture is closed")
-	ErrUnsupportedElement    = errors.New("cuda: element type not supported by CUDA arrays")
-	ErrNilSurface            = errors.New("cuda: nil surface")
-	ErrSurfaceClosed         = errors.New("cuda: surface is closed")
-	ErrNoSurfaceStore        = errors.New("cuda: array was not allocated with surface store")
-	ErrNilHostFunc           = errors.New("cuda: nil host function")
-	ErrEventNotInterprocess  = errors.New("cuda: event was not created with WithEventInterprocess")
-	ErrNilLinker             = errors.New("cuda: nil linker")
-	ErrLinkerClosed          = errors.New("cuda: linker is closed")
+	// The packed-argument update sentinels originate in internal/argpack,
+	// which performs the checks; they are re-exported for errors.Is.
+	ErrArgIndexOutOfRange   = argpack.ErrIndexOutOfRange
+	ErrArgTypeMismatch      = argpack.ErrTypeMismatch
+	ErrArgSizeMismatch      = argpack.ErrSizeMismatch
+	ErrContextMismatch      = errors.New("cuda: resource belongs to a different context")
+	ErrUnsupportedFillType  = errors.New("cuda: Fill is unsupported for 8-byte element types")
+	ErrInvalidBlockSize     = errors.New("cuda: block size must be positive")
+	ErrNilGlobal            = errors.New("cuda: nil global")
+	ErrEmptyGlobalName      = errors.New("cuda: empty global name")
+	ErrInvalidGlobalName    = errors.New("cuda: global name contains null byte")
+	ErrNilGraph             = errors.New("cuda: nil graph")
+	ErrGraphClosed          = errors.New("cuda: graph is closed")
+	ErrNilGraphExec         = errors.New("cuda: nil executable graph")
+	ErrGraphExecClosed      = errors.New("cuda: executable graph is closed")
+	ErrNilMemPool           = errors.New("cuda: nil memory pool")
+	ErrNilArray             = errors.New("cuda: nil array")
+	ErrArrayClosed          = errors.New("cuda: array is closed")
+	ErrNilTexture           = errors.New("cuda: nil texture")
+	ErrTextureClosed        = errors.New("cuda: texture is closed")
+	ErrUnsupportedElement   = errors.New("cuda: element type not supported by CUDA arrays")
+	ErrNilSurface           = errors.New("cuda: nil surface")
+	ErrSurfaceClosed        = errors.New("cuda: surface is closed")
+	ErrNoSurfaceStore       = errors.New("cuda: array was not allocated with surface store")
+	ErrNilHostFunc          = errors.New("cuda: nil host function")
+	ErrEventNotInterprocess = errors.New("cuda: event was not created with WithEventInterprocess")
+	ErrNilLinker            = errors.New("cuda: nil linker")
+	ErrLinkerClosed         = errors.New("cuda: linker is closed")
 )
 
 // Error is the typed error returned for non-success CUDA result codes.
