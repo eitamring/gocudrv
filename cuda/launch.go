@@ -81,7 +81,8 @@ func newLaunchArgState(ctx *Context) *launchArgState {
 
 func (s *launchArgState) reset() {
 	s.builder.release()
-	*s = launchArgState{}
+	s.builder = kernelArgBuilder{}
+	s.packed.Reset()
 }
 
 func (s *launchArgState) recycle() {
@@ -289,11 +290,9 @@ func (f *Function) launch(ctx context.Context, rawStream cudasys.CUstream, strea
 	return err
 }
 
-// PackedArgs is a kernel argument list packed once for repeated low-overhead
-// launches. It captures raw handles at pack time and takes no per-launch locks,
-// so keep every referenced Buffer, Texture, and Surface (and their arrays) open
-// and unchanged while it is used. Build one with Pack and launch it with
-// Function.LaunchPacked; do not copy it, pass the pointer Pack returns.
+// PackedArgs is a kernel argument list packed once by Pack, updated in place
+// by SetPacked and its siblings, and launched by Function.LaunchPacked. It
+// holds raw handles and no locks: keep resources open and never copy it.
 type PackedArgs struct {
 	packed argpack.Builder
 }
@@ -301,8 +300,9 @@ type PackedArgs struct {
 // Pack packs args into a reusable PackedArgs. It accepts the same arguments as
 // Launch, but resolves each buffer or texture to a raw handle immediately
 // rather than holding its lock, so the caller owns lifetime from here on. Pack
-// does no context check; the resources must belong to the Context the kernel is
-// launched on.
+// materializes the parameter array so even the first launch allocates nothing.
+// It does no context check; the resources must belong to the Context the
+// kernel is launched on.
 func Pack(args ...KernelArg) (*PackedArgs, error) {
 	p := &PackedArgs{}
 	b := kernelArgBuilder{packed: &p.packed, snapshot: true}
@@ -314,6 +314,7 @@ func Pack(args ...KernelArg) (*PackedArgs, error) {
 			return nil, err
 		}
 	}
+	p.packed.Params()
 	return p, nil
 }
 
@@ -323,6 +324,61 @@ func (p *PackedArgs) Len() int {
 		return 0
 	}
 	return p.packed.Len()
+}
+
+// SetPacked updates packed argument i in place with a scalar of the exact
+// type it was packed with, without allocating. It must not run concurrently
+// with a launch that is using p.
+func SetPacked[T Supported](p *PackedArgs, i int, v T) error {
+	if p == nil {
+		return ErrNilKernelArg
+	}
+	return argpack.Set(&p.packed, i, v)
+}
+
+// SetPackedBuffer repoints packed argument i at b's device pointer with the
+// same snapshot semantics as Pack: no lock is retained, the caller owns
+// buffer lifetime, and a Close racing this call can leave a stale pointer
+// packed. It must not run concurrently with a launch using p.
+func SetPackedBuffer[T Supported](p *PackedArgs, i int, b *Buffer[T]) error {
+	if p == nil {
+		return ErrNilKernelArg
+	}
+	if b == nil {
+		return ErrNilBuffer
+	}
+	b.opMu.RLock()
+	if b.closed {
+		b.opMu.RUnlock()
+		return ErrBufferClosed
+	}
+	ptr := b.ptr
+	b.opMu.RUnlock()
+	return argpack.Set(&p.packed, i, ptr)
+}
+
+// SetDevicePtr updates packed argument i with a raw device pointer. The slot
+// must have been packed as a device pointer by Arg or ArgDevicePtr. It must
+// not run concurrently with a launch using p.
+func (p *PackedArgs) SetDevicePtr(i int, ptr cudasys.CUdeviceptr) error {
+	if p == nil {
+		return ErrNilKernelArg
+	}
+	return argpack.Set(&p.packed, i, ptr)
+}
+
+// SetRaw updates packed argument i from size bytes at value. It checks the
+// packed size, not the type, so it is also the escape hatch for
+// reinterpreting a slot of the same width. It must not run concurrently with
+// a launch using p.
+func (p *PackedArgs) SetRaw(i int, value unsafe.Pointer, size int) error {
+	if p == nil || value == nil {
+		return ErrNilKernelArg
+	}
+	if size <= 0 || size > maxRawArgBytes {
+		return ErrInvalidArgSize
+	}
+	return p.packed.SetBytes(i, unsafe.Slice((*byte)(value), size))
 }
 
 // LaunchPacked launches f on the context's legacy default stream with
