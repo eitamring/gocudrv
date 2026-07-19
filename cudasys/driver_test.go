@@ -22,13 +22,13 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 	// A failure binding any required symbol must close the library and fail Load.
 	for _, failOn := range expectedRequiredOrder {
 		t.Run(failOn+" fails", func(t *testing.T) {
-			prev := bindFn
-			t.Cleanup(func() { bindFn = prev })
-			bindFn = func(_ dynload.Library, _ any, name string) error {
+			prev := lookupFn
+			t.Cleanup(func() { lookupFn = prev })
+			lookupFn = func(_ dynload.Library, name string) (uintptr, error) {
 				if name == failOn {
-					return errors.New("bind: nope")
+					return 0, errors.New("lookup: nope")
 				}
-				return nil
+				return 1, nil
 			}
 
 			f := &fakeLib{}
@@ -47,9 +47,9 @@ func TestLoadClosesLibOnBindFailure(t *testing.T) {
 }
 
 func TestLoadSuccessKeepsLib(t *testing.T) {
-	prev := bindFn
-	t.Cleanup(func() { bindFn = prev })
-	bindFn = func(dynload.Library, any, string) error { return nil }
+	prev := lookupFn
+	t.Cleanup(func() { lookupFn = prev })
+	lookupFn = func(dynload.Library, string) (uintptr, error) { return 1, nil }
 
 	f := &fakeLib{}
 	d, err := Load(f)
@@ -89,9 +89,9 @@ func TestCloseOnNilReceiverAndEmptyDriver(t *testing.T) {
 }
 
 // expectedRequiredOrder and expectedOptionalOrder are the exact sequences Load
-// binds: required symbols first (fatal on failure), then optional feature
-// symbols (best-effort). They mirror the tables in docs/internals.md; update
-// both together when the bound surface changes.
+// resolves: required symbols first (fatal on failure), then optional feature
+// symbols (best-effort). They mirror the dispatch tables in syscall_bind.go
+// and docs/internals.md; update all together when the bound surface changes.
 var expectedRequiredOrder = []string{
 	"cuInit",
 	"cuDriverGetVersion",
@@ -207,18 +207,18 @@ var expectedOptionalOrder = []string{
 }
 
 func TestLoadBindsExpectedSymbolsInOrder(t *testing.T) {
-	prev := bindFn
-	t.Cleanup(func() { bindFn = prev })
+	prev := lookupFn
+	t.Cleanup(func() { lookupFn = prev })
 
 	var got []string
 	seen := map[string]bool{}
-	bindFn = func(_ dynload.Library, _ any, name string) error {
+	lookupFn = func(_ dynload.Library, name string) (uintptr, error) {
 		if seen[name] {
-			t.Errorf("symbol %q bound more than once", name)
+			t.Errorf("symbol %q looked up more than once", name)
 		}
 		seen[name] = true
 		got = append(got, name)
-		return nil
+		return 1, nil
 	}
 
 	f := &fakeLib{}
@@ -239,16 +239,16 @@ func TestLoadBindsExpectedSymbolsInOrder(t *testing.T) {
 
 func TestLoadStopsAtFirstBindFailure(t *testing.T) {
 	const failAt = "cuMemGetInfo_v2"
-	prev := bindFn
-	t.Cleanup(func() { bindFn = prev })
+	prev := lookupFn
+	t.Cleanup(func() { lookupFn = prev })
 
 	var attempted []string
-	bindFn = func(_ dynload.Library, _ any, name string) error {
+	lookupFn = func(_ dynload.Library, name string) (uintptr, error) {
 		attempted = append(attempted, name)
 		if name == failAt {
-			return errors.New("bind: nope")
+			return 0, errors.New("lookup: nope")
 		}
-		return nil
+		return 1, nil
 	}
 
 	f := &fakeLib{}
@@ -287,13 +287,13 @@ func TestLoadStopsAtFirstBindFailure(t *testing.T) {
 func TestLoadSkipsMissingOptionalSymbols(t *testing.T) {
 	for _, missing := range expectedOptionalOrder {
 		t.Run(missing+" missing", func(t *testing.T) {
-			prev := bindFn
-			t.Cleanup(func() { bindFn = prev })
-			bindFn = func(_ dynload.Library, _ any, name string) error {
+			prev := lookupFn
+			t.Cleanup(func() { lookupFn = prev })
+			lookupFn = func(_ dynload.Library, name string) (uintptr, error) {
 				if name == missing {
-					return errors.New("bind: nope")
+					return 0, errors.New("lookup: nope")
 				}
-				return nil
+				return 1, nil
 			}
 
 			f := &fakeLib{}

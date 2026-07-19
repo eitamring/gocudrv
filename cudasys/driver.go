@@ -129,165 +129,26 @@ type Driver struct {
 	CuMemcpyPeer           func(dstDevice CUdeviceptr, dstContext CUcontext, srcDevice CUdeviceptr, srcContext CUcontext, byteCount uint64) CUresult
 }
 
-// bindFn is the symbol-binding function used by Load. Overridable in tests.
-var bindFn = bind
+// lookupFn is the symbol-address lookup used by Load. Overridable in tests.
+var lookupFn = lookupSymbol
 
-// symbol pairs a destination function pointer with its driver entry-point name.
-type symbol struct {
-	fn   any
-	name string
-}
-
-// Load binds the CUDA driver symbols from lib. Core symbols are required: if any
-// of them fails to bind, the library is closed and the error is returned, so
-// callers do not have to track ownership of the handle on the failure path.
-// Feature symbols (async allocation, occupancy, graphs) are bound best-effort: a
-// driver that does not export one leaves its pointer nil and the corresponding
-// API returns ErrSymbolUnavailable when called, so newer features do not raise
-// the minimum driver version for callers that never use them. See
-// docs/internals.md for the symbol table and the practical minimum version.
+// Load resolves each driver symbol to its raw address and assigns a SyscallN
+// adapter to its Driver field. A missing required symbol fails Load and closes
+// the library; feature symbols bind best-effort. See docs/internals.md.
 func Load(lib dynload.Library) (*Driver, error) {
 	d := &Driver{lib: lib}
-	required := []symbol{
-		// init
-		{&d.CuInit, "cuInit"},
-		{&d.CuDriverGetVersion, "cuDriverGetVersion"},
-		// device discovery and attributes
-		{&d.CuDeviceGetCount, "cuDeviceGetCount"},
-		{&d.CuDeviceGet, "cuDeviceGet"},
-		{&d.CuDeviceGetName, "cuDeviceGetName"},
-		{&d.CuDeviceTotalMem, "cuDeviceTotalMem_v2"},
-		{&d.CuDeviceGetAttribute, "cuDeviceGetAttribute"},
-		// context and primary context
-		{&d.CuCtxGetCurrent, "cuCtxGetCurrent"},
-		{&d.CuCtxSetCurrent, "cuCtxSetCurrent"},
-		{&d.CuCtxSynchronize, "cuCtxSynchronize"},
-		{&d.CuCtxGetStreamPriorityRange, "cuCtxGetStreamPriorityRange"},
-		{&d.CuDevicePrimaryCtxRetain, "cuDevicePrimaryCtxRetain"},
-		{&d.CuDevicePrimaryCtxRelease, "cuDevicePrimaryCtxRelease_v2"},
-		// synchronous device and pinned host memory
-		{&d.CuMemAlloc, "cuMemAlloc_v2"},
-		{&d.CuMemFree, "cuMemFree_v2"},
-		{&d.CuMemGetInfo, "cuMemGetInfo_v2"},
-		{&d.CuMemcpyHtoD, "cuMemcpyHtoD_v2"},
-		{&d.CuMemcpyDtoH, "cuMemcpyDtoH_v2"},
-		{&d.CuMemcpyDtoD, "cuMemcpyDtoD_v2"},
-		{&d.CuMemcpyHtoDAsync, "cuMemcpyHtoDAsync_v2"},
-		{&d.CuMemcpyDtoHAsync, "cuMemcpyDtoHAsync_v2"},
-		{&d.CuMemcpyDtoDAsync, "cuMemcpyDtoDAsync_v2"},
-		{&d.CuMemsetD8, "cuMemsetD8_v2"},
-		{&d.CuMemsetD16, "cuMemsetD16_v2"},
-		{&d.CuMemsetD32, "cuMemsetD32_v2"},
-		{&d.CuMemsetD8Async, "cuMemsetD8Async"},
-		{&d.CuMemsetD16Async, "cuMemsetD16Async"},
-		{&d.CuMemsetD32Async, "cuMemsetD32Async"},
-		{&d.CuMemAllocHost, "cuMemAllocHost_v2"},
-		{&d.CuMemFreeHost, "cuMemFreeHost"},
-		// module loading and globals
-		{&d.CuModuleLoadData, "cuModuleLoadData"},
-		{&d.CuModuleLoadDataEx, "cuModuleLoadDataEx"},
-		{&d.CuModuleUnload, "cuModuleUnload"},
-		{&d.CuModuleGetFunction, "cuModuleGetFunction"},
-		{&d.CuModuleGetGlobal, "cuModuleGetGlobal_v2"},
-		// streams
-		{&d.CuStreamCreate, "cuStreamCreate"},
-		{&d.CuStreamCreateWithPriority, "cuStreamCreateWithPriority"},
-		{&d.CuStreamDestroy, "cuStreamDestroy_v2"},
-		{&d.CuStreamSynchronize, "cuStreamSynchronize"},
-		{&d.CuStreamQuery, "cuStreamQuery"},
-		{&d.CuStreamWaitEvent, "cuStreamWaitEvent"},
-		// events
-		{&d.CuEventCreate, "cuEventCreate"},
-		{&d.CuEventDestroy, "cuEventDestroy_v2"},
-		{&d.CuEventRecord, "cuEventRecord"},
-		{&d.CuEventQuery, "cuEventQuery"},
-		{&d.CuEventSynchronize, "cuEventSynchronize"},
-		{&d.CuEventElapsedTime, "cuEventElapsedTime"},
-		// kernel launch
-		{&d.CuLaunchKernel, "cuLaunchKernel"},
-	}
-	optional := []symbol{
-		// stream-ordered async allocation (CUDA 11.2+)
-		{&d.CuMemAllocAsync, "cuMemAllocAsync"},
-		{&d.CuMemFreeAsync, "cuMemFreeAsync"},
-		// occupancy helpers (CUDA 6.5+)
-		{&d.CuOccupancyMaxActiveBlocksPerMultiprocessor, "cuOccupancyMaxActiveBlocksPerMultiprocessor"},
-		{&d.CuOccupancyMaxPotentialBlockSize, "cuOccupancyMaxPotentialBlockSize"},
-		// graph capture and replay (CUDA 11.x)
-		{&d.CuStreamBeginCapture, "cuStreamBeginCapture_v2"},
-		{&d.CuStreamEndCapture, "cuStreamEndCapture"},
-		{&d.CuGraphInstantiate, "cuGraphInstantiateWithFlags"},
-		{&d.CuGraphLaunch, "cuGraphLaunch"},
-		{&d.CuGraphDestroy, "cuGraphDestroy"},
-		{&d.CuGraphExecDestroy, "cuGraphExecDestroy"},
-		{&d.CuGraphExecUpdate, "cuGraphExecUpdate"},
-		// device diagnostics (PCI bus id CUDA 4.1+, uuid CUDA 9.2+)
-		{&d.CuDeviceGetPCIBusId, "cuDeviceGetPCIBusId"},
-		{&d.CuDeviceGetUuid, "cuDeviceGetUuid"},
-		// host memory registration (CUDA 6.5+)
-		{&d.CuMemHostRegister, "cuMemHostRegister_v2"},
-		{&d.CuMemHostUnregister, "cuMemHostUnregister"},
-		// pitched allocation and 2D/3D copies (CUDA 3.2+)
-		{&d.CuMemAllocPitch, "cuMemAllocPitch_v2"},
-		{&d.CuMemcpy2D, "cuMemcpy2D_v2"},
-		{&d.CuMemcpy2DAsync, "cuMemcpy2DAsync_v2"},
-		{&d.CuMemcpy3D, "cuMemcpy3D_v2"},
-		{&d.CuMemcpy3DAsync, "cuMemcpy3DAsync_v2"},
-		{&d.CuArrayCreate, "cuArrayCreate_v2"},
-		{&d.CuArray3DCreate, "cuArray3DCreate_v2"},
-		{&d.CuArrayDestroy, "cuArrayDestroy"},
-		{&d.CuTexObjectCreate, "cuTexObjectCreate"},
-		{&d.CuTexObjectDestroy, "cuTexObjectDestroy"},
-		{&d.CuSurfObjectCreate, "cuSurfObjectCreate"},
-		{&d.CuSurfObjectDestroy, "cuSurfObjectDestroy"},
-		// memory pools (CUDA 11.2+)
-		{&d.CuDeviceGetDefaultMemPool, "cuDeviceGetDefaultMemPool"},
-		{&d.CuMemPoolGetAttribute, "cuMemPoolGetAttribute"},
-		{&d.CuMemPoolSetAttribute, "cuMemPoolSetAttribute"},
-		{&d.CuMemAllocFromPoolAsync, "cuMemAllocFromPoolAsync"},
-		// unified (managed) memory (CUDA 6.0+ / 8.0+)
-		{&d.CuMemAllocManaged, "cuMemAllocManaged"},
-		{&d.CuMemPrefetchAsync, "cuMemPrefetchAsync"},
-		{&d.CuMemAdvise, "cuMemAdvise"},
-		// virtual memory management (CUDA 10.2+)
-		{&d.CuMemGetAllocationGranularity, "cuMemGetAllocationGranularity"},
-		{&d.CuMemCreate, "cuMemCreate"},
-		{&d.CuMemAddressReserve, "cuMemAddressReserve"},
-		{&d.CuMemMap, "cuMemMap"},
-		{&d.CuMemSetAccess, "cuMemSetAccess"},
-		{&d.CuMemUnmap, "cuMemUnmap"},
-		{&d.CuMemAddressFree, "cuMemAddressFree"},
-		{&d.CuMemRelease, "cuMemRelease"},
-		// kernel and pointer attributes (CUDA 6.5+ / 4.0+)
-		{&d.CuFuncSetAttribute, "cuFuncSetAttribute"},
-		{&d.CuFuncGetAttribute, "cuFuncGetAttribute"},
-		{&d.CuPointerGetAttribute, "cuPointerGetAttribute"},
-		// peer access for multi-GPU (CUDA 4.0+)
-		{&d.CuDeviceCanAccessPeer, "cuDeviceCanAccessPeer"},
-		{&d.CuCtxEnablePeerAccess, "cuCtxEnablePeerAccess"},
-		{&d.CuCtxDisablePeerAccess, "cuCtxDisablePeerAccess"},
-		{&d.CuMemcpyPeer, "cuMemcpyPeer"},
-		{&d.CuLaunchCooperativeKernel, "cuLaunchCooperativeKernel"},
-		{&d.CuLaunchHostFunc, "cuLaunchHostFunc"},
-		{&d.CuIpcGetMemHandle, "cuIpcGetMemHandle"},
-		{&d.CuIpcCloseMemHandle, "cuIpcCloseMemHandle"},
-		{&d.CuIpcGetEventHandle, "cuIpcGetEventHandle"},
-		// JIT linker (v2 entry points, CUDA 6.5+)
-		{&d.CuLinkCreate, "cuLinkCreate_v2"},
-		{&d.CuLinkAddData, "cuLinkAddData_v2"},
-		{&d.CuLinkComplete, "cuLinkComplete"},
-		{&d.CuLinkDestroy, "cuLinkDestroy"},
-	}
-	for _, b := range required {
-		if err := bindFn(lib, b.fn, b.name); err != nil {
+	for _, s := range requiredSymbols {
+		addr, err := lookupFn(lib, s.name)
+		if err != nil {
 			_ = lib.Close()
 			return nil, err
 		}
+		s.set(d, addr)
 	}
-	for _, b := range optional {
-		// Best-effort: a missing optional symbol leaves the pointer nil. The
-		// wrapper for that call reports ErrSymbolUnavailable.
-		_ = bindFn(lib, b.fn, b.name)
+	for _, s := range optionalSymbols {
+		if addr, err := lookupFn(lib, s.name); err == nil {
+			s.set(d, addr)
+		}
 	}
 	bindByValueIPC(lib, d)
 	return d, nil

@@ -122,6 +122,38 @@ wrapper for the affected call returns `ErrSymbolUnavailable`. This keeps newer
 features from raising the minimum driver version for callers that never use
 them.
 
+### SyscallN dispatch
+
+`Load` resolves each entry point to its raw address (`dlsym` off windows,
+`GetProcAddress` on windows) and assigns an adapter closure to the typed
+`Driver` field that calls `purego.SyscallN` with the arguments converted to
+`uintptr`. Pointer arguments convert inside the call expression;
+`SyscallN` is declared `//go:uintptrescapes`, so the pointed-to memory is kept
+alive and visible to the GC across the foreign call. The typed fields are
+unchanged, so fake drivers and every layer above are unaffected.
+
+Two constraints the adapters rely on: `SyscallN` cannot pass float arguments
+by value (no bound symbol takes one; every float in the surface is behind a
+pointer), and `cuOccupancyMaxPotentialBlockSize`'s `blockSizeToDynamicSMemSize`
+slot is a C callback pointer that must stay 0 or a C-callable address.
+`cudaresult` always passes 0.
+
+Measured on the WSL2 RTX 4070 Ti dev box with the integration benchmarks
+(`BenchmarkRegisteredDeviceAttr` vs `BenchmarkSyscallNDeviceAttr` and the
+`BenchmarkReal*` suite): the registered `purego.RegisterLibFunc` wrappers this
+replaces cost 3 to 5 heap allocations and roughly 380 to 640 ns per real
+driver call; the SyscallN adapters cost 2 allocations (SyscallN's own variadic
+slice and call frame) and roughly 145 to 175 ns. A small-kernel end-to-end
+launch drops from 43 to 14 allocations per operation. The two `cuIpcOpen*` entry points
+keep a registered binding off windows because their 64-byte handle passes per
+the platform C ABI (on the stack on SysV, by reference on arm64), which
+`SyscallN` cannot express portably; on windows the win64 ABI passes the handle
+by reference, so their adapters pass a pointer to the local copy.
+`TestSyscallNMatchesRegistered` compares both dispatch mechanisms directly on
+real hardware, including error paths and a negative scalar; the full
+integration suite is the broad oracle, since every driver call it makes runs
+through the adapters and asserts real results.
+
 Core symbols (always required at init):
 
 | C entry point | `Driver` field | group |
@@ -249,10 +281,10 @@ runs once and is dropped; panics inside a callback are swallowed because the
 calling thread is not a Go thread.
 
 The two `cuIpcOpen*` entry points take their 64-byte handle by value. On SysV
-targets the struct passes on the stack directly; on windows, where the ABI
-passes large aggregates by reference and the FFI layer does not marshal struct
-values, they are bound with the pointer signature the ABI actually uses and
-adapted to the same `Driver` field type.
+targets the struct passes on the stack directly, so they keep a registered
+binding; on windows the ABI passes large aggregates by reference, so their
+SyscallN adapters pass a pointer to the local copy the Go call already made.
+Both shapes serve the same `Driver` field type.
 
 ### minimum practical driver version
 
