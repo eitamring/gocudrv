@@ -348,6 +348,67 @@ func (b *Buffer[T]) CopyFromHostAsync(ctx context.Context, stream *Stream, src P
 	return err
 }
 
+// CopyFromHostRangeAsync enqueues an async copy of n elements starting at
+// element srcOffset in src into the buffer starting at element dstOffset. It
+// returns after CUDA accepts the work, not after the copy finishes.
+//
+// The copy is ordered with respect to stream only. If the destination is next
+// read on the SAME stream, no further synchronization is needed — CUDA
+// stream order provides it for free. Reading the destination from a
+// different stream, or from the null (legacy default) stream, requires an
+// explicit stream.Synchronize (or an event wait) first; gocudrv's own streams
+// are CU_STREAM_NON_BLOCKING and therefore do NOT implicitly order against
+// the null stream. src must not be read, mutated, or closed, and b and
+// stream must not be closed, until that ordering is established.
+//
+// Validation matches CopyFromAt and CopyToDeviceAtAsync, and runs before any
+// CUDA call: ErrInvalidLength for a non-positive n or a negative offset,
+// ErrOutOfRange if either the source or destination range does not fit its
+// buffer, and ErrContextMismatch if stream or src belong to a different
+// context than b.
+func (b *Buffer[T]) CopyFromHostRangeAsync(ctx context.Context, stream *Stream, dstOffset int, src PinnedHost[T], srcOffset, n int) error {
+	if b == nil {
+		return ErrNilBuffer
+	}
+	host, err := pinnedHostRefOf(src)
+	if err != nil {
+		return err
+	}
+	if stream == nil {
+		return ErrNilStream
+	}
+	stream.opMu.RLock()
+	defer stream.opMu.RUnlock()
+	if stream.closed {
+		return ErrStreamClosed
+	}
+	b.opMu.RLock()
+	defer b.opMu.RUnlock()
+	if b.closed {
+		return ErrBufferClosed
+	}
+	host.lock.RLock()
+	defer host.lock.RUnlock()
+	if *host.closed {
+		return ErrBufferClosed
+	}
+	if stream.ctx != b.ctx || host.ctx != b.ctx {
+		return ErrContextMismatch
+	}
+	if n <= 0 || srcOffset < 0 || dstOffset < 0 {
+		return ErrInvalidLength
+	}
+	if srcOffset > host.length-n || dstOffset > b.length-n {
+		return ErrOutOfRange
+	}
+	dst := b.offsetPtr(dstOffset)
+	srcPtr := (*byte)(unsafe.Add(unsafe.Pointer(host.ptr), uintptr(srcOffset)*uintptr(elemSize[T]())))
+	bytes := uint64(n) * elemSize[T]()
+	err = b.ctx.memcpyHtoDAsync(ctx, dst, srcPtr, bytes, stream.raw)
+	runtime.KeepAlive(host.owner)
+	return err
+}
+
 // CopyToHostAsync enqueues a copy from the device buffer into pinned host
 // memory on stream. It returns after CUDA accepts the work. The pinned memory
 // must not be read, mutated, or closed until stream.Synchronize confirms the
