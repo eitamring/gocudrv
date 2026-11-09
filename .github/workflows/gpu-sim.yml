@@ -1,0 +1,76 @@
+name: CUDA integration tests (simulated H100)
+
+# Optional, non-required check. The hosted runners have no GPU, so this runs the
+# `cuda_integration` tests (which ci.yml only vets) on a simulated NVIDIA H100
+# (https://github.com/pantheongpu/pantheonsim). A simulator cannot reproduce
+# hardware-specific behavior or timing, so it complements real-GPU testing and
+# does not replace it.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "cuda/**"
+      - "cudasys/**"
+      - "cudaresult/**"
+      - "internal/**"
+      - "examples/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/gpu-sim.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cuda-sim:
+    name: Go integration tests on simulated H100
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The package is pure Go (no cgo and no CUDA toolkit needed): purego loads
+      # libcuda at run time, and `vgpu run` puts the simulator's libcuda in front
+      # of the loader path.
+      - name: Set up the simulated GPU
+        uses: pantheongpu/setup-pantheonsim@ca87fe3143b29166822b923d6050945c5179408c # v0.1.5
+        with:
+          gpu: nvidia/h100
+
+      # Four tests are skipped:
+      # - TestRealBlockedSynchronizeLeavesCommandsAndSetupFree and
+      #   TestRealBlockedStreamWaitLeavesOtherWaitFree enqueue a host function
+      #   that blocks until the test releases it, and then check that another
+      #   goroutine can still synchronize. The simulator runs host functions
+      #   inline in the launching call (pantheonsim#487), so the launch itself
+      #   never returns and the test hangs.
+      # - TestRealModuleJITLog expects a non-empty CU_JIT_ERROR_LOG_BUFFER after
+      #   cuModuleLoadDataEx fails on malformed PTX. The simulator rejects the
+      #   module but leaves the log buffer empty.
+      # - TestRealLinkerBadPTX expects cuLinkAddData or cuLinkComplete to reject
+      #   malformed PTX. The simulator's linker accepts it.
+      - name: Run cuda_integration tests
+        run: |
+          vgpu run go test -tags cuda_integration -count=1 -v ./cuda/... ./cudasys/... \
+            -skip 'TestRealBlockedSynchronizeLeavesCommandsAndSetupFree|TestRealBlockedStreamWaitLeavesOtherWaitFree|TestRealModuleJITLog|TestRealLinkerBadPTX'
+
+      - name: Run examples
+        run: |
+          go build -o "$RUNNER_TEMP/examples/" ./examples/device-info ./examples/event-pipeline ./examples/vector-add
+          for e in device-info event-pipeline vector-add; do
+            echo "== $e"
+            vgpu run "$RUNNER_TEMP/examples/$e"
+          done
